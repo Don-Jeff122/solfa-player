@@ -101,6 +101,28 @@ describe('hymnal word sheet', () => {
     expect(HYMN_WORDS.ta).toBe('te')
   })
 
+  it('reads a lone e as the raised tonic (de)', () => {
+    expect(HYMN_WORDS.e).toBe('di')
+    const { ok, events } = scanHymnalLine('d : d . e / d : d', 1, 'Tenor')
+    expect(ok).toBe(true)
+    expect(events.map((e) => e.solfa)).toEqual(['do', 'do', 'di', 'do', 'do'])
+  })
+
+  it('parses a Riverson-style sheet: Doh header with trailing text, e as de', () => {
+    const parsed = parseSolfa(
+      'Doh = G                    I.M.                I.D. RIVERSON, 1907-1967\n' +
+        'd :- |\n' +
+        'm :- |\n' +
+        'd : d . e / d : d | d : d / d . s : f . f | m :- /- :- ||\n' +
+        'm :- |'
+    )
+    expect(parsed.ok).toBe(true, parsed.error && parsed.error.message)
+    expect(parsed.result.key).toBe('G')
+    expect(parsed.result.parts.map((p) => p.name)).toEqual(['Soprano', 'Alto', 'Tenor', 'Bass'])
+    const tenor = parsed.result.parts[2]
+    expect(tenor.notes.map((n) => n.solfa)).toContain('di')
+  })
+
   it('parses the pasted Twi hymn verbatim', () => {
     const parsed = parseSolfa(TWY_SHEET)
     expect(parsed.ok).toBe(true, parsed.error && parsed.error.message)

@@ -12,6 +12,7 @@ import {
 } from './audio/voices.js'
 import { audioBufferToWavBlob } from './audio/wav.js'
 import { parseSolfa } from './lib/parseSolfa.js'
+import { SAMPLE_SHEETS } from './lib/sampleSheets.js'
 import {
   buildSequences,
   clampVoiceOctave,
@@ -62,7 +63,15 @@ export default function App() {
   const [wavName, setWavName] = useState('solfa.wav')
   const [error, setError] = useState(null)
   const [audioError, setAudioError] = useState(null)
-  const [sheets, setSheets] = useState(() => loadSheets())
+  const [sheets, setSheets] = useState(() => {
+    const existing = loadSheets()
+    if (existing.length) return existing
+    let seeded = existing
+    for (const sample of SAMPLE_SHEETS) {
+      seeded = saveSheet({ name: sample.name, text: sample.text }).sheets
+    }
+    return seeded
+  })
   const [sheetName, setSheetName] = useState('')
   const [savedMsg, setSavedMsg] = useState(null)
   const [voiceOctaves, setVoiceOctaves] = useState({})

@@ -10,7 +10,7 @@ import {
 const KEY_COLON_RE = /^\s*(?:key|tonic)\s*[:=]\s*([a-gA-G][#b]?|[a-zA-Z])?\s*$/i
 const KEY_EQ_RE = /^\s*1\s*=\s*([a-gA-G][#b]?|[a-zA-Z])?\s*$/i
 // "Doh = A" — the tonic-sol-fa header printed on Ghanaian hymn sheets.
-const DOH_KEY_RE = /^\s*doh\s*[:=]\s*([a-gA-G][#b]?)\s*$/i
+const DOH_KEY_RE = /^\s*doh\s*[:=]\s*([a-gA-G][#b]?)/i
 // "Key E Flat", "key f#", "tonic bb" — the word forms printed on hymn sheets.
 // Not anchored at the end: printed headers carry trailing text like a composer
 // or poetic metre ("Key E Flat  10.10.10.10.  W.H. MONK 1823-1889.").

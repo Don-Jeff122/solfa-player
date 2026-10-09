@@ -29,6 +29,7 @@ export const HYMN_WORDS = Object.freeze({
   le: 'li',
   te: 'te',
   de: 'di',
+  e: 'di',
   fe: 'fi',
   lo: 'le',
   ta: 'te',
