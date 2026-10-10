@@ -28,7 +28,11 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
   })
 
   return (
-    <div className="piano-case" aria-label="Piano keyboard">
+    <div
+      className="piano-case"
+      aria-label="Piano keyboard"
+      onSelectStart={(e) => e.preventDefault()}
+    >
       <div className="piano-nameplate">
         <span>
           {midiName(start)} – {midiName(end)}
