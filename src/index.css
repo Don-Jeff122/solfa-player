@@ -709,6 +709,8 @@ input[type='range']::-moz-range-thumb {
   border-radius: 4px 4px 8px 8px;
   overflow: hidden;
   min-width: min-content;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .piano-scroll {
@@ -737,6 +739,9 @@ input[type='range']::-moz-range-thumb {
   padding: 0;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .key:focus-visible {
