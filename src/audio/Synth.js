@@ -126,6 +126,8 @@ export class Synth {
     this._noiseBuffer = null
     this._waveCtx = null
     this._waveCache = null
+    this._out = null
+    this._outCtx = null
     /** First scheduling failure of the current playback, or null. */
     this.lastError = null
     /** Node budget of the current playback, for diagnostics and tests. */
@@ -184,6 +186,23 @@ export class Synth {
     bus.connect(comp)
     comp.connect(destination)
     return bus
+  }
+
+  /**
+   * One master chain that lives for the life of the context.
+   *
+   * Played songs build their own chain and disconnect it when they stop, but a
+   * key tap must never leave a silence behind: tapping a hymn line can build a
+   * fresh compressor per note in a few seconds, and a real browser's audio
+   * thread starts to fall silent when it juggles a growing pile of them. Every
+   * tap instead feeds the same chain the next tap uses.
+   */
+  _output(ctx) {
+    if (!this._out || this._outCtx !== ctx) {
+      this._outCtx = ctx
+      this._out = this._masterChain(ctx, ctx.destination)
+    }
+    return this._out
   }
 
   /**
@@ -635,17 +654,9 @@ export class Synth {
 
   playTap(midi, { tempo = 90, voice, sustain = 0 } = {}) {
     const ctx = this._ensureCtx()
-    const bus = this._masterChain(ctx, ctx.destination)
+    const bus = this._output(ctx)
     const hold = Math.max(0.4, 60 / tempo)
-    const chosen = getVoice(voice)
     this._scheduleNote(ctx, bus, midi, ctx.currentTime + 0.02, hold, 0.95, voice, sustain)
-    setTimeout(() => {
-      try {
-        bus.disconnect()
-      } catch {
-        /* already disconnected */
-      }
-    }, (hold + chosen.release + sustain + 0.3) * 1000)
   }
 
   async render(seqs, { tempo = 90, tail = 1.4, voice, sustain = 0, metronome = false } = {}) {

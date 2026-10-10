@@ -303,7 +303,11 @@ export default function App() {
   }
 
   const handleTap = (midi) => {
-    synth.playTap(midi, { tempo, voice: sound, sustain: ring })
+    try {
+      synth.playTap(midi, { tempo, voice: sound, sustain: ring })
+    } catch (err) {
+      setAudioError(err && err.message ? err.message : String(err))
+    }
     setActiveMidi(new Set([midi]))
     clearTimeout(tapTimerRef.current)
     tapTimerRef.current = setTimeout(() => setActiveMidi(new Set()), 280)

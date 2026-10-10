@@ -610,6 +610,20 @@ describe('synth voice graphs', () => {
     synth.playTap(60)
     expect(nodesOfKind(fake.live.log, 'oscillator').length).toBe(4)
   })
+
+  it('shares one master output across key taps instead of piling up nodes', () => {
+    fake = installFakeAudio()
+    const synth = new Synth()
+    synth.playTap(60)
+    synth.playTap(64)
+    synth.playTap(67)
+    const compressors = nodesOfKind(fake.live.log, 'compressor')
+    expect(compressors).toHaveLength(1)
+    // One oscillator per piano partial per tap, and one shared bus (tone,
+    // partial and envelope gains per note, plus the persistent master bus).
+    expect(nodesOfKind(fake.live.log, 'oscillator').length).toBe(12)
+    expect(nodesOfKind(fake.live.log, 'gain').length).toBe(19)
+  })
 })
 
 describe('lookahead scheduling', () => {
