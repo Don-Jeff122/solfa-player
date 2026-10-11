@@ -211,6 +211,10 @@ export default function App() {
     handleRef.current = null
     setNoteIndexes([])
     setAudioError(null)
+    try {
+      const ctx = synth._ensureCtx?.() || synth.ctx
+      if (ctx?.state === 'suspended' && ctx.resume) ctx.resume()
+    } catch {}
     handleRef.current = synth.play(sequences, {
       tempo,
       voice: sound,
@@ -286,6 +290,10 @@ export default function App() {
       // Instruments that ring on (bell, music box, hymn organ) plus the chosen
       // ring-out need a long tail or the export is clipped mid-decay.
       const tail = Math.max(1.4, getVoice(sound).release + ring + 0.3)
+      try {
+        const ctx = synth._ensureCtx?.() || synth.ctx
+        if (ctx?.state === 'suspended' && ctx.resume) ctx.resume()
+      } catch {}
       const buffer = await synth.render(sequences, {
         tempo,
         tail,
@@ -304,6 +312,8 @@ export default function App() {
 
   const handleTap = (midi) => {
     try {
+      const ctx = synth._ensureCtx?.() || synth.ctx
+      if (ctx?.state === 'suspended' && ctx.resume) ctx.resume()
       synth.playTap(midi, { tempo, voice: sound, sustain: ring })
     } catch (err) {
       setAudioError(err && err.message ? err.message : String(err))
