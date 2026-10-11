@@ -592,7 +592,7 @@ export default function App() {
             onStop={stopPlayback}
             tempo={tempo}
             onTempo={setTempo}
-            key={key}
+            sheetKey={key}
             onKey={setUiKey}
             keyFromSheet={!!sheetKey}
             parts={partNames}

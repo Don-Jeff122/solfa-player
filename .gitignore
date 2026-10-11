@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# OCR language data is downloaded by tesseract.js, never bundled from the repo.
+eng.traineddata
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

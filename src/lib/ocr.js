@@ -1,5 +1,3 @@
-import { parseSolfa } from './parseSolfa.js'
-
 /**
  * Solfa syllables are not a standard Tesseract vocabulary, so raw OCR output is
  * noisy. This maps the syllables we care about onto a small, forgiving alphabet
@@ -216,9 +214,4 @@ export function pagesToSolfa(pages) {
       ? pages.reduce((sum, p) => sum + (p?.confidence ?? 0), 0) / pages.length
       : 0
   return { ...result, confidence, pages: pages?.length || 0 }
-}
-
-/** Validate a converted sheet so the UI can warn before playback. */
-export function validateConverted(text) {
-  return parseSolfa(text)
 }

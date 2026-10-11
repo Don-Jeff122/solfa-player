@@ -332,7 +332,6 @@ function stepOffsetOf(f, cy) {
   return Math.abs(steps - Math.round(steps))
 }
 
-/** A filled head has ink in the middle; a hollow one keeps paper there. */
 /** A solid head is inked through its middle; a hollow one is not. */
 function isFilled(mask, width, head) {
   const inset = Math.max(1, Math.round(head.height * 0.25))

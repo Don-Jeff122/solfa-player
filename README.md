@@ -1,16 +1,50 @@
-# React + Vite
+# Solfa Piano
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Type tonic solfa and hear it played. Supports Ghanaian hymnal notation —
+multiple parts (Soprano/Alto/Tenor/Bass), `Doh = X` keys, chromatic syllables
+(`fe` = raised fa, a lone `e` = raised tonic), holds, ties and repeats — plus
+WAV recording and OCR of printed solfa sheets.
 
-Currently, two official plugins are available:
+Live at <https://don-jeff122.github.io/solfa-player/>.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- Solfa input with keys, metre, durations, octave marks and repeats
+- Four-part hymnal sheets: `S:`/`A:`/`T:`/`B:` rows are routed to their own
+  voice, played together or soloed
+- On-screen piano keyboard, voice / sustain / tempo controls
+- Playback through a dependency-free Web Audio synth (no samples)
+- Record and download a WAV of the playback
+- Scan a printed page or PDF with Tesseract (loaded on demand) and turn it
+  into playable solfa
+- Sheets persist in the browser (`localStorage`); a fresh browser is seeded
+  with the built-in "Abide with Me" sample
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Getting started
 
-## Expanding the Oxlint configuration
+```sh
+npm install
+npm run dev        # local dev server
+npm run test       # vitest
+npm run lint       # oxlint
+npm run build      # production build -> dist/
+npm run preview    # serve the production build locally
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Deploying
+
+The repo includes a GitHub Pages workflow (`.github/workflows/deploy.yml`) that
+builds the app and publishes it on every push to `main`. The Vite build uses a
+relative `base` (`./` in `vite.config.js`) so the app also works from the
+Pages subpath.
+
+## Layout
+
+- `src/lib/parseSolfa.js` — solfa text → parsed notes/parts
+- `src/lib/hymnal.js` — scanners for printed hymnal sheets (`d : d | m : -`,
+  `S:` part rows, `Doh = A` headers)
+- `src/audio/Synth.js`, `src/audio/voices.js` — Web Audio synthesizer and
+  instrument presets (all plain data, fully unit-tested)
+- `src/components/` — piano, controls, saved sheets, sheet scanner
+- `src/lib/ocr.js`, `src/lib/ocrService.js` — Tesseract OCR + PDF handling,
+  loaded lazily when the scanner opens

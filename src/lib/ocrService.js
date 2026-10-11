@@ -107,13 +107,6 @@ function getWorker(onProgress) {
   return workerPromise
 }
 
-export function terminateOcr() {
-  if (workerPromise) {
-    workerPromise.then((w) => w.terminate()).catch(() => {})
-    workerPromise = null
-  }
-}
-
 /**
  * OCR an image or PDF. Returns the recognised text per page together with the
  * preprocessed canvases and positioned words, so staff detection can run in the

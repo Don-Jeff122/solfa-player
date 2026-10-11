@@ -1,5 +1,8 @@
 
 
+  import { describe, expect, it } from 'vitest'
+import { parseSolfa } from '../parseSolfa.js'
+
   it('parses chromatic solfa', () => {
     expect(firstNotes('Di Ri Fi Si Li Ra Me Se Le Te').map((n) => n.solfa)).toEqual([
       'di',
@@ -39,8 +42,6 @@
     expect(parsed.error.message).toMatch(/Di, Ri, Fi, Si, Li/)
     expect(parsed.error.message).toMatch(/Ra, Me, Se, Le, Te/)
   })
-import { describe, expect, it } from 'vitest'
-import { parseSolfa } from '../parseSolfa.js'
 
 function firstNotes(text) {
   const parsed = parseSolfa(text)

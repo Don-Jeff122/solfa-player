@@ -14,9 +14,9 @@ export default function Controls({
   onStop,
   tempo,
   onTempo,
-  key,
-  onKey,
   keyFromSheet,
+  sheetKey,
+  onKey,
   parts,
   activeParts,
   onTogglePart,
@@ -129,7 +129,7 @@ export default function Controls({
       <div className="controls-row selects">
         <label className="select-field">
           <span>Key</span>
-          <select value={key} onChange={(e) => onKey(e.target.value)} disabled={keyFromSheet}>
+          <select value={sheetKey} onChange={(e) => onKey(e.target.value)} disabled={keyFromSheet}>
             {MAJOR_KEYS.map((k) => (
               <option key={k} value={k}>
                 {k} major

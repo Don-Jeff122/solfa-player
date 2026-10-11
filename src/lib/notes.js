@@ -24,12 +24,6 @@ export const SOLFA_OFFSETS = {
   te: 8,
 }
 
-/** Chromatic syllables, raised first then lowered, for help text and tests. */
-export const CHROMATIC_SOLFA = {
-  raised: ['Di', 'Ri', 'Fi', 'Si', 'Li'],
-  lowered: ['Ra', 'Me', 'Se', 'Le', 'Te'],
-}
-
 export const LETTER_TO_SOLFA = {
   d: 'do',
   r: 're',
@@ -39,8 +33,6 @@ export const LETTER_TO_SOLFA = {
   l: 'la',
   t: 'ti',
 }
-
-export const SOLFA_NAMES = ['Do', 'Re', 'Mi', 'Fa', 'So', 'La', 'Ti']
 
 const SEMITONES = {
   c: 0,
