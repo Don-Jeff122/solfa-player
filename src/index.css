@@ -159,7 +159,8 @@ summary,
   flex-wrap: wrap;      /* H2 + actions can stack instead of colliding */
   gap: 8px;
   margin-bottom: 10px;
-  margin: 0;
+}
+
 .card-head h2 {
   font-size: 15px;
   font-weight: 700;
@@ -700,6 +701,156 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
   align-self: flex-end;
   padding-bottom: 8px;
+}
+
+/* ---------- voice picker ---------- */
+
+.voice-picker {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.voice-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.voice-head > span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.voice-links {
+  display: flex;
+  gap: 12px;
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+.voice-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.voice-chip {
+  padding: 6px 13px;
+  border: 1px solid var(--card-edge);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+
+.voice-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.voice-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(245, 185, 66, 0.28);
+}
+
+.voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.voice.muted .voice-oct {
+  opacity: 0.5;
+}
+
+.voice-oct {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--card-edge);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.voice-oct button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+
+.voice-oct button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.voice-oct button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.voice-oct-value {
+  min-width: 20px;
+  text-align: center;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.voice-picker .hint {
+  margin: 8px 0 0;
+  color: var(--accent);
+  font-size: 11.5px;
 }
 
 /* ---------- piano ---------- */
