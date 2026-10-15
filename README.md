@@ -38,6 +38,21 @@ builds the app and publishes it on every push to `main`. The Vite build uses a
 relative `base` (`./` in `vite.config.js`) so the app also works from the
 Pages subpath.
 
+## Offline use (installable PWA)
+
+The build is a Progressive Web App: open the deployed site once and install it
+(Add to Home Screen / install icon in the address bar). A service worker
+(`vite-plugin-pwa` + Workbox) precaches the whole app shell plus the OCR engine,
+so playback, saved sheets and the sheet scanner all work with no connection.
+
+The OCR engine is bundled locally under `public/tesseract/` (Tesseract worker,
+LSTM core and `eng` language data), so scanning never calls a CDN:
+
+- `public/tesseract/worker/worker.min.js` — Tesseract web worker
+- `public/tesseract/core/tesseract-core-lstm.wasm.js` — SIMD-free LSTM core
+  (wasm embedded, works on every WebAssembly browser)
+- `public/tesseract/lang/eng.traineddata.gz` — English language data
+
 ## Layout
 
 - `src/lib/parseSolfa.js` — solfa text → parsed notes/parts

@@ -12,7 +12,7 @@ dist
 dist-ssr
 *.local
 
-# OCR language data is downloaded by tesseract.js, never bundled from the repo.
+# Stray uncompressed OCR data (the app bundles public/tesseract/lang/*.traineddata.gz)
 eng.traineddata
 
 # Editor directories and files

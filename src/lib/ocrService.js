@@ -5,6 +5,11 @@ import { extractWords } from './ocr.js'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
+// Bundle the OCR engine + English language data with the app so scanning works
+// with no network connection. These live in `public/tesseract/` and are also
+// precached by the service worker (see vite.config.js).
+const OCR_BASE = `${import.meta.env.BASE_URL}tesseract`
+
 const MAX_DIMENSION = 2200
 
 function loadImage(file) {
@@ -95,6 +100,9 @@ let workerPromise = null
 function getWorker(onProgress) {
   if (!workerPromise) {
     workerPromise = createWorker('eng', 1, {
+      workerPath: `${OCR_BASE}/worker/worker.min.js`,
+      corePath: `${OCR_BASE}/core/tesseract-core-lstm.wasm.js`,
+      langPath: `${OCR_BASE}/lang`,
       logger: (m) => {
         if (m.status === 'recognizing text') {
           onProgress?.(`Reading music… ${Math.round((m.progress || 0) * 100)}%`)
