@@ -42,6 +42,39 @@ export const LOOKAHEAD_SECONDS = 3
 /** Never schedule more narrowly than this, or a fast tempo starves the timer. */
 export const LOOKAHEAD_MIN = 0.5
 
+/**
+ * How slurred notes are joined. A slur (`_`) means two notes are sung to one
+ * syllable, so the first is held this many seconds into the second (the joint
+ * never goes silent) and the second swells in rather than re-striking.
+ */
+export const LEGATO_OVERLAP = 0.06
+export const LEGATO_ATTACK_SCALE = 0.4
+
+/**
+ * Which notes of a sequence flow into the next without a fresh attack.
+ *
+ * A note's `slur` is its group id, so two neighbours with the same id are
+ * joined: the earlier one is `legatoOut` (held through the joint) and the later
+ * one is `legatoIn` (softened attack).
+ */
+export function slurFlags(notes) {
+  const list = notes || []
+  return list.map((note, i) => {
+    const prev = list[i - 1]
+    const next = list[i + 1]
+    const id = note.slur
+    return {
+      legatoIn: id != null && !!prev && prev.slur === id,
+      legatoOut: id != null && !!next && next.slur === id,
+    }
+  })
+}
+
+/** The attack time a note gets: slurred continuations swell in more gently. */
+export function legatoAttack(voice, legatoIn) {
+  return Math.max(voice.attack * (legatoIn ? LEGATO_ATTACK_SCALE : 1), 0.001)
+}
+
 function clampHz(value, floor, cap) {
   return Math.min(Math.max(value, floor), cap)
 }
@@ -222,10 +255,23 @@ export class Synth {
     osc.stop(time + 0.08)
   }
 
-  _scheduleNote(ctx, destination, midi, t0, durSec, velocity = 0.95, voiceId, ring = 0, resolved) {
+  _scheduleNote(
+    ctx,
+    destination,
+    midi,
+    t0,
+    durSec,
+    velocity = 0.95,
+    voiceId,
+    ring = 0,
+    resolved,
+    legatoIn = false,
+  ) {
     const voice = resolved || getVoice(voiceId)
     const f = midiToFreq(midi)
-    const attack = Math.max(voice.attack, 0.001)
+    // A slurred continuation swells in from the note before it instead of
+    // striking cleanly, so the two read as one sung syllable.
+    const attack = legatoAttack(voice, legatoIn)
     // Automation events must be inserted in time order, and a note can be
     // shorter than the instrument's own attack or decay. Put the hold after
     // whatever the attack and decay already scheduled, or a browser throws and
@@ -427,17 +473,22 @@ export class Synth {
 
     const events = []
     seqs.forEach((seq, seqIndex) => {
+      const flags = slurFlags(seq.notes)
       let t = 0
       seq.notes.forEach((n, index) => {
         const start = t0 + t * beat
         if (start >= from && start < to) {
+          const legatoOut = flags[index].legatoOut
           events.push({
             midi: n.midi,
             beats: n.beats,
             index,
             seqIndex,
             start,
-            dur: Math.max(n.beats * beat, 0.1),
+            // A slurred note is held a little into the next one, so the joint
+            // between them never goes silent.
+            dur: Math.max(n.beats * beat, 0.1) + (legatoOut ? LEGATO_OVERLAP : 0),
+            legatoIn: flags[index].legatoIn,
           })
         }
         t += n.beats
@@ -508,6 +559,7 @@ export class Synth {
           voiceId,
           ring,
           chosen.voice,
+          ev.legatoIn,
         )
       } catch (err) {
         // One note the context refuses must not silence the rest of the song —

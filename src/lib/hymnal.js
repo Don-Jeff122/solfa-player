@@ -5,6 +5,8 @@
 //   - `:` and `/` are beat gridlines: every marker advances one beat slot.
 //   - `.` divides the current beat in two: `d.r` is do and re sharing one beat.
 //     A side with no note is a rest, so `.d` is a half rest then do.
+//   - `_` joins the note before it to the note after it into one slur. The two
+//     are sung to a single syllable, so playback flows between them.
 //   - `-` holds a beat; `0` is a rest; a note letter is one beat.
 //   - A subscript digit (f1, t₁) means an octave below, as it is printed.
 //   - The meters are often hidden: a bar like `m :- /m :r` is four beats.
@@ -81,8 +83,31 @@ export function scanHymnalLine(text, lineNo, partName) {
   let cell = { parts: [], dots: 0, seg: 0 }
   let lastSound = null
   let justEnded = false
+  // A `_` joins the note before it to the note after it. Notes are batched into
+  // beats and only emitted later, so the link is recorded on the notes
+  // themselves (a shared slur id) rather than as its own event.
+  let slurId = 0
+  let pendingSlur = false
+  let prevPart = null
+  let prevSound = null
 
   const fail = (message) => ({ ok: false, message })
+
+  const joinSlur = (part) => {
+    if (part.solfa == null) {
+      pendingSlur = false
+      return
+    }
+    if (pendingSlur) {
+      const target = prevPart && prevPart.solfa != null ? prevPart : prevSound
+      if (target && target.solfa != null) {
+        const id = target.slur != null ? target.slur : ++slurId
+        target.slur = id
+        part.slur = id
+      }
+    }
+    pendingSlur = false
+  }
 
   // A beat is split by its dots into equal segments. Each segment is filled by
   // the notes sitting in it (which then split that segment equally), or is a
@@ -95,26 +120,44 @@ export function scanHymnalLine(text, lineNo, partName) {
     for (let seg = 0; seg < segments; seg++) {
       const group = parts.filter((p) => p.seg === seg)
       if (group.length === 0) {
-        events.push({ type: 'note', token: '0', solfa: null, up: 0, down: 0, beats: segShare })
+        const rest = { type: 'note', token: '0', solfa: null, up: 0, down: 0, beats: segShare, slur: null }
+        events.push(rest)
+        lastSound = rest
+        prevSound = rest
         continue
       }
       const share = segShare / group.length
       for (const part of group) {
         if (part.type === 'hold') {
           if (lastSound) lastSound.beats += share
-          else events.push({ type: 'note', token: '-', solfa: null, up: 0, down: 0, beats: share })
+          else {
+            const hold = { type: 'note', token: '-', solfa: null, up: 0, down: 0, beats: share, slur: null }
+            events.push(hold)
+            lastSound = hold
+            prevSound = hold
+          }
           continue
         }
         const beats = segments > 1 || group.length > 1 ? share : 1 + (part.extra || 0)
         const ev =
           part.type === 'rest'
-            ? { type: 'note', token: '0', solfa: null, up: 0, down: 0, beats }
-            : { type: 'note', token: part.token, solfa: part.solfa, up: part.up, down: part.down, beats }
+            ? { type: 'note', token: '0', solfa: null, up: 0, down: 0, beats, slur: part.slur ?? null }
+            : {
+                type: 'note',
+                token: part.token,
+                solfa: part.solfa,
+                up: part.up,
+                down: part.down,
+                beats,
+                slur: part.slur ?? null,
+              }
         events.push(ev)
         lastSound = ev
+        prevSound = ev
       }
     }
     cell = { parts: [], dots: 0, seg: 0 }
+    prevPart = null
   }
 
   const matchBarTokenAt = (idx) => {
@@ -134,6 +177,15 @@ export function scanHymnalLine(text, lineNo, partName) {
     if (ch === ' ' || ch === '\t' || ch === '{' || ch === '}') {
       justEnded = false
       i++
+      continue
+    }
+
+    if (ch === '_') {
+      // A slur connector joins the note before it to the note after it. It is
+      // transparent to the beat grid (like a space) and only marks the link.
+      pendingSlur = true
+      i++
+      justEnded = false
       continue
     }
 
@@ -189,6 +241,8 @@ export function scanHymnalLine(text, lineNo, partName) {
         continue
       }
       if (ch === '0') {
+        pendingSlur = false
+        prevPart = null
         cell.parts.push({ type: 'rest', seg: cell.seg })
         i++
         justEnded = true
@@ -214,6 +268,7 @@ export function scanHymnalLine(text, lineNo, partName) {
       }
       i++
       justEnded = true
+      pendingSlur = false
       continue
     }
 
@@ -247,9 +302,14 @@ export function scanHymnalLine(text, lineNo, partName) {
         i++
       }
       if (solfa === 'rest') {
+        pendingSlur = false
+        prevPart = null
         cell.parts.push({ type: 'rest', seg: cell.seg })
       } else {
-        cell.parts.push({ type: 'note', token: raw, solfa, up, down, extra: 0, seg: cell.seg })
+        const part = { type: 'note', token: raw, solfa, up, down, extra: 0, seg: cell.seg }
+        joinSlur(part)
+        cell.parts.push(part)
+        prevPart = part
       }
       justEnded = true
       continue

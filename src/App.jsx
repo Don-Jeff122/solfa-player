@@ -48,6 +48,29 @@ function SolfaChip({ note, current }) {
   )
 }
 
+/**
+ * Consecutive notes that share a slur id form one underlined run; every other
+ * note is a run of its own.
+ */
+function slurRuns(notes) {
+  const runs = []
+  let current = null
+  notes.forEach((note, i) => {
+    if (note.slur == null) {
+      runs.push({ slur: null, items: [{ note, i }] })
+      current = null
+      return
+    }
+    if (current && current.slur === note.slur) {
+      current.items.push({ note, i })
+    } else {
+      current = { slur: note.slur, items: [{ note, i }] }
+      runs.push(current)
+    }
+  })
+  return runs
+}
+
 export default function App() {
   const [text, setText] = useState(DEFAULT_TEXT)
   const [uiKey, setUiKey] = useState('C')
@@ -465,19 +488,27 @@ export default function App() {
                   <div className="chip-group" key={seq.name}>
                     {activeParts.length > 1 && <span className="chip-label">{seq.name}</span>}
                     <div className="chips">
-                      {seq.notes.map((n, i) => {
-                        const prev = i > 0 ? bars[seq.notes[i - 1].bar] : null
-                        const next = bars[n.bar]
-                        const boundary = i > 0 && n.bar !== seq.notes[i - 1].bar
-                          ? barGlyph(prev, next)
-                          : null
+                      {slurRuns(seq.notes).map((run, runIndex) => {
+                        const chips = run.items.map(({ note: n, i }) => {
+                          const prev = i > 0 ? bars[seq.notes[i - 1].bar] : null
+                          const next = bars[n.bar]
+                          const boundary = i > 0 && n.bar !== seq.notes[i - 1].bar
+                            ? barGlyph(prev, next)
+                            : null
+                          return (
+                            <span key={i} className="chip-node">
+                              {boundary && <span className="chip bar">{boundary}</span>}
+                              <SolfaChip
+                                note={n}
+                                current={isPlaying && i === noteIndexes[seqIndex]}
+                              />
+                            </span>
+                          )
+                        })
+                        if (run.slur == null) return chips
                         return (
-                          <span key={i} className="chip-node">
-                            {boundary && <span className="chip bar">{boundary}</span>}
-                            <SolfaChip
-                              note={n}
-                              current={isPlaying && i === noteIndexes[seqIndex]}
-                            />
+                          <span key={`slur-${runIndex}`} className="chip-slur">
+                            {chips}
                           </span>
                         )
                       })}
@@ -527,6 +558,11 @@ export default function App() {
                 a beat.
               </li>
               <li>
+                <b>Slur</b>: join notes sung to one syllable with an underscore:{' '}
+                <code>Do_Re</code> or <code>Do _ Re</code>. The run is underlined and played
+                legato, and it can cross beats and bars.
+              </li>
+              <li>
                 <b>Key</b>: first line <code>Key: G</code> (or <code>tonic: D</code>,{' '}
                 <code>1=F#</code>)
               </li>
@@ -543,8 +579,8 @@ export default function App() {
                 <b>Real choir sheet</b>: paste a hymnal line straight in:{' '}
                 <code>{'{ m :- /m :r | d :- /s :- }'}</code>. Beat marks{' '}
                 <code>:</code> and <code>/</code> split each bar into beats, <code>.</code>{' '}
-                splits one beat in two, <code>-</code> holds a beat, <code>0</code> rests, and{' '}
-                <code>de fe se le lo ta</code> are the
+                splits one beat in two, <code>_</code> slurs two notes, <code>-</code> holds a
+                beat, <code>0</code> rests, and <code>de fe se le lo ta</code> are the
                 real-sheet chromatics. A subscript like <code>f₁</code> or <code>t₁</code> is an
                 octave down. Title, lyric and composer lines are ignored; the rows of a{' '}
                 <code>{'{ }'}</code> block become Soprano, Alto, Tenor and Bass

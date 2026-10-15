@@ -263,6 +263,16 @@ summary,
   gap: 4px;
 }
 
+/* A slur run: the notes sung to one syllable, underlined as on a printed sheet. */
+.chip-slur {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding-bottom: 3px;
+  border-bottom: 2px solid var(--accent);
+  border-radius: 2px;
+}
+
 .chip.bar {
   background: transparent;
   border-style: solid;

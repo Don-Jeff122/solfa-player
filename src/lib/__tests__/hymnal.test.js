@@ -117,6 +117,15 @@ describe('scanHymnalLine', () => {
     expect(message).toMatch(/More than one dot/)
   })
 
+  it('records a slur on both notes across the connector', () => {
+    const { ok, events } = scanHymnalLine('d _ m', 1, 'Soprano')
+    expect(ok).toBe(true)
+    const notes = events.filter((e) => e.type === 'note')
+    expect(notes).toHaveLength(2)
+    expect(Number.isInteger(notes[0].slur)).toBe(true)
+    expect(notes[0].slur).toBe(notes[1].slur)
+  })
+
   it('reports unknown words with a real-sheet hint', () => {
     const { ok, message } = scanHymnalLine('q :-', 1, 'Alto')
     expect(ok).toBe(false)
@@ -304,5 +313,52 @@ describe('part headers in hymnal mode', () => {
       expect(p.notes.length, p.name).toBe(2)
       expect(p.notes.some((n) => n.line > 4)).toBe(true)
     }
+  })
+})
+
+describe('slurs', () => {
+  it('links the notes joined by an underscore in a real sheet', () => {
+    const parsed = parseSolfa('d _ m | f : s')
+    expect(parsed.ok, parsed.ok ? '' : parsed.error.message).toBe(true)
+    const notes = parsed.result.parts[0].notes
+    expect(notes.map((n) => n.solfa)).toEqual(['do', 'mi', 'fa', 'so'])
+    expect(Number.isInteger(notes[0].slur)).toBe(true)
+    expect(notes[0].slur).toBe(notes[1].slur)
+    expect(notes[2].slur ?? null).toBeNull()
+    expect(notes[3].slur ?? null).toBeNull()
+  })
+
+  it('carries a slur across a bar line', () => {
+    const parsed = parseSolfa('d _ | m | f : s')
+    expect(parsed.ok, parsed.ok ? '' : parsed.error.message).toBe(true)
+    const notes = parsed.result.parts[0].notes
+    expect(notes[0].bar).not.toBe(notes[1].bar)
+    expect(Number.isInteger(notes[0].slur)).toBe(true)
+    expect(notes[0].slur).toBe(notes[1].slur)
+  })
+
+  it('joins a slurred pair written without spaces', () => {
+    const parsed = parseSolfa('s_f / s : f')
+    expect(parsed.ok, parsed.ok ? '' : parsed.error.message).toBe(true)
+    const notes = parsed.result.parts[0].notes
+    expect(Number.isInteger(notes[0].slur)).toBe(true)
+    expect(notes[0].slur).toBe(notes[1].slur)
+    expect(notes[2].slur ?? null).toBeNull()
+  })
+
+  it('chains three notes into one slur', () => {
+    const parsed = parseSolfa('d_m_f / s : l')
+    expect(parsed.ok, parsed.ok ? '' : parsed.error.message).toBe(true)
+    const notes = parsed.result.parts[0].notes
+    expect(Number.isInteger(notes[0].slur)).toBe(true)
+    expect(notes[0].slur).toBe(notes[1].slur)
+    expect(notes[1].slur).toBe(notes[2].slur)
+  })
+
+  it('does not let a dangling connector reach the next part', () => {
+    const parsed = parseSolfa('Soprano:\nm : _\nBass:\nm : m')
+    expect(parsed.ok, parsed.ok ? '' : parsed.error.message).toBe(true)
+    const bass = parsed.result.parts.find((p) => p.name === 'Bass')
+    expect(bass.notes.every((n) => n.slur == null)).toBe(true)
   })
 })

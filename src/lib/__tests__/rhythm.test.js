@@ -121,6 +121,57 @@ describe('rhythm grammar', () => {
   })
 })
 
+describe('slurs', () => {
+  it('links two notes joined by an underscore', () => {
+    const r = parseSolfa('Do_Re Mi')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    const notes = r.result.parts[0].notes
+    expect(notes[0].slur).not.toBeNull()
+    expect(notes[0].slur).toBe(notes[1].slur)
+    expect(notes[2].slur ?? null).toBeNull()
+  })
+
+  it('accepts a spaced underscore connector', () => {
+    const r = parseSolfa('Do _ Re')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    const notes = r.result.parts[0].notes
+    expect(notes.map((n) => n.solfa)).toEqual(['do', 're'])
+    expect(notes[0].slur).toBe(notes[1].slur)
+  })
+
+  it('carries the slur group into the playable sequences', () => {
+    const seqs = notesOf('Do_Re Mi', ALL_PARTS)
+    expect(seqs[0].notes[0].slur).not.toBeNull()
+    expect(seqs[0].notes[0].slur).toBe(seqs[0].notes[1].slur)
+  })
+
+  it('breaks the chain at a rest', () => {
+    const r = parseSolfa('Do _ 0 Re')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    const notes = r.result.parts[0].notes
+    expect(notes[0].slur ?? null).toBeNull()
+    expect(notes[1].solfa).toBeNull()
+    expect(notes[2].slur ?? null).toBeNull()
+  })
+
+  it('joins across a split beat', () => {
+    const r = parseSolfa('Do_Re.Mi')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    const notes = r.result.parts[0].notes
+    expect(notes.map((n) => n.solfa)).toEqual(['do', 're', 'mi'])
+    expect(notes[0].slur).toBe(notes[1].slur)
+    expect(notes[2].slur ?? null).toBeNull()
+  })
+
+  it('rejects a connector with a missing note', () => {
+    for (const bad of ['Do_', '_Do', 'Do__Re']) {
+      const r = parseSolfa(bad)
+      expect(r.ok, bad).toBe(false)
+      expect(r.error.message).toMatch(/slur must join two notes/)
+    }
+  })
+})
+
 describe('multi-voice selection', () => {
   const sheet = 'Bass\nDo So\nTenor\nMi Re\nAlto\nFa La'
 

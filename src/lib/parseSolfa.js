@@ -99,6 +99,32 @@ export function parseSolfa(text) {
 
   const fail = (message) => ({ ok: false, error: { message } })
 
+  // A slur (`_`) joins two notes that are sung to one syllable: the note before
+  // the connector and the note after it share a group id, so the preview draws
+  // one line under them and playback flows between them. A group never crosses
+  // into another part, and a rest breaks the chain.
+  let slurId = 0
+  let slurPending = false
+  let slurPrev = null
+  let slurPrevPart = null
+  const markSlur = () => {
+    slurPending = true
+  }
+  const linkSlur = (part, note) => {
+    if (part !== slurPrevPart) {
+      slurPending = false
+      slurPrev = null
+      slurPrevPart = part
+    }
+    if (slurPending && slurPrev && slurPrev.solfa != null && note.solfa != null) {
+      const id = slurPrev.slur != null ? slurPrev.slur : ++slurId
+      slurPrev.slur = id
+      note.slur = id
+    }
+    slurPending = false
+    slurPrev = note
+  }
+
   // A real sheet is spotted before any parsing so that when it appears, its
   // lyric, title and composer lines can be ignored instead of rejected.
   let hymnal = false
@@ -248,6 +274,8 @@ export function parseSolfa(text) {
           if (!bar.endings.includes(ev.n)) bar.endings.push(ev.n)
           if (bar.line == null) bar.line = lineNo
         } else {
+          // The scanner already joined slurred notes, so the group id rides on
+          // the note event.
           pushNote({
             token: ev.token,
             solfa: ev.solfa,
@@ -255,6 +283,7 @@ export function parseSolfa(text) {
             down: ev.down || 0,
             beats: ev.beats,
             line: lineNo,
+            slur: ev.slur ?? null,
           })
         }
       }
@@ -341,6 +370,7 @@ export function parseSolfa(text) {
     }
 
     const pushNote = (note) => {
+      linkSlur(part, note)
       let bar = currentOf(part)
       if (!bar) bar = ensureBar()
       note.bar = part.bars.length - 1
@@ -349,8 +379,40 @@ export function parseSolfa(text) {
       part.notes.push(note)
     }
 
-    for (const token of line.split(/\s+/)) {
+    // A `_` slur connector may stand alone (`Do _ Re`) or join notes in one
+    // token (`Do_Re`); both become the same stream, so the loop below only ever
+    // sees a plain `_` marker between notes.
+    const tokens = []
+    for (const raw of line.split(/\s+/)) {
+      if (!raw) continue
+      if (raw === '_') {
+        tokens.push('_')
+        continue
+      }
+      if (!raw.includes('_')) {
+        tokens.push(raw)
+        continue
+      }
+      const sides = raw.split('_')
+      if (sides.some((side) => side === '')) {
+        return fail(
+          `A slur must join two notes, so "${raw}" on line ${lineNo} (part "${part.name}") ` +
+            `can't start, end or double the "_" connector.`
+        )
+      }
+      sides.forEach((side, k) => {
+        if (k > 0) tokens.push('_')
+        tokens.push(side)
+      })
+    }
+
+    for (const token of tokens) {
       if (!token) continue
+
+      if (token === '_') {
+        markSlur()
+        continue
+      }
 
       const bm = token.match(BAR_RE)
       if (bm) {

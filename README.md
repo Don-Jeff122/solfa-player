@@ -2,8 +2,9 @@
 
 Type tonic solfa and hear it played. Supports Ghanaian hymnal notation,
 multiple parts (Soprano/Alto/Tenor/Bass), `Doh = X` keys, chromatic syllables
-(`fe` = raised fa, a lone `e` = raised tonic), holds, ties and repeats, plus
-WAV recording and OCR of printed solfa sheets.
+(`fe` = raised fa, a lone `e` = raised tonic), holds, slurs (underscored notes
+sung to one syllable and played legato), ties and repeats, plus WAV recording
+and OCR of printed solfa sheets.
 
 Live at <https://don-jeff122.github.io/solfa-player/>.
 
