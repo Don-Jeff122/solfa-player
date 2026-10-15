@@ -115,13 +115,11 @@ export default function SheetScanner({ onApply }) {
           <div className="dropzone-body">
             <div className="spinner" aria-hidden="true" />
             <p>{progress}</p>
-            <p className="muted">First run downloads the OCR engine (~15 MB).</p>
+            <p className="muted">First scan loads the OCR engine.</p>
           </div>
         ) : (
           <div className="dropzone-body">
-            <div className="dropzone-icon" aria-hidden="true">
-              ⬆
-            </div>
+            <div className="dropzone-icon" aria-hidden="true" />
             <p>
               <strong>Drop a screenshot or PDF here</strong>
             </p>
@@ -150,7 +148,7 @@ export default function SheetScanner({ onApply }) {
                 rhythm from {result.staves} staff{result.staves === 1 ? '' : 's'}
               </span>
             ) : (
-              <span className="tag warn">no staff found — all notes are 1 beat</span>
+              <span className="tag warn">no staff found, so all notes are 1 beat</span>
             )}
             {result.unmatchedNotes > 0 && (
               <span className="tag warn">{result.unmatchedNotes} note{result.unmatchedNotes === 1 ? '' : 's'} unmatched</span>
@@ -167,7 +165,7 @@ export default function SheetScanner({ onApply }) {
           )}
 
           <label className="scanner-preview-label" htmlFor="scanner-text">
-            Recognised notes — edit if needed
+            Recognised notes (edit if needed)
           </label>
           <textarea
             id="scanner-text"
@@ -190,7 +188,7 @@ export default function SheetScanner({ onApply }) {
       )}
 
       <p className="scanner-note">
-        Reads <b>solfa syllables</b> — Do Re Mi Fa So La Ti, or letters D R M F S L T,
+        Reads <b>solfa syllables</b>: Do Re Mi Fa So La Ti, or letters D R M F S L T,
         plus the chromatic Di Ri Fi Si Li and Ra Me Se Le Te.
         Solfa printed under a five-line staff also gives the <b>note lengths</b>, which
         are measured from the staff itself; nothing else on the staff is interpreted.

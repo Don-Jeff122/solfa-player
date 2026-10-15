@@ -1,8 +1,8 @@
 # Solfa Piano
 
-Type tonic solfa and hear it played. Supports Ghanaian hymnal notation —
+Type tonic solfa and hear it played. Supports Ghanaian hymnal notation,
 multiple parts (Soprano/Alto/Tenor/Bass), `Doh = X` keys, chromatic syllables
-(`fe` = raised fa, a lone `e` = raised tonic), holds, ties and repeats — plus
+(`fe` = raised fa, a lone `e` = raised tonic), holds, ties and repeats, plus
 WAV recording and OCR of printed solfa sheets.
 
 Live at <https://don-jeff122.github.io/solfa-player/>.
@@ -48,18 +48,18 @@ so playback, saved sheets and the sheet scanner all work with no connection.
 The OCR engine is bundled locally under `public/tesseract/` (Tesseract worker,
 LSTM core and `eng` language data), so scanning never calls a CDN:
 
-- `public/tesseract/worker/worker.min.js` — Tesseract web worker
-- `public/tesseract/core/tesseract-core-lstm.wasm.js` — SIMD-free LSTM core
+- `public/tesseract/worker/worker.min.js`: Tesseract web worker
+- `public/tesseract/core/tesseract-core-lstm.wasm.js`: SIMD-free LSTM core
   (wasm embedded, works on every WebAssembly browser)
-- `public/tesseract/lang/eng.traineddata.gz` — English language data
+- `public/tesseract/lang/eng.traineddata.gz`: English language data
 
 ## Layout
 
-- `src/lib/parseSolfa.js` — solfa text → parsed notes/parts
-- `src/lib/hymnal.js` — scanners for printed hymnal sheets (`d : d | m : -`,
+- `src/lib/parseSolfa.js`: solfa text → parsed notes/parts
+- `src/lib/hymnal.js`: scanners for printed hymnal sheets (`d : d | m : -`,
   `S:` part rows, `Doh = A` headers)
-- `src/audio/Synth.js`, `src/audio/voices.js` — Web Audio synthesizer and
+- `src/audio/Synth.js`, `src/audio/voices.js`: Web Audio synthesizer and
   instrument presets (all plain data, fully unit-tested)
-- `src/components/` — piano, controls, saved sheets, sheet scanner
-- `src/lib/ocr.js`, `src/lib/ocrService.js` — Tesseract OCR + PDF handling,
+- `src/components/`: piano, controls, saved sheets, sheet scanner
+- `src/lib/ocr.js`, `src/lib/ocrService.js`: Tesseract OCR + PDF handling,
   loaded lazily when the scanner opens

@@ -12,7 +12,7 @@ export default function SavedSheets({ sheets, onLoad, onDelete }) {
       <summary>Saved sheets{sheets.length ? ` (${sheets.length})` : ''}</summary>
       {sheets.length === 0 ? (
         <p className="saved-empty">
-          Nothing saved yet. Name a sheet and press <b>Save</b> to keep it here — it stays in this
+          Nothing saved yet. Name a sheet and press <b>Save</b> to keep it here. It stays in this
           browser, so you can load it again next time.
         </p>
       ) : (

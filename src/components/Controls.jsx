@@ -163,7 +163,7 @@ export default function Controls({
                       aria-pressed={on}
                       onClick={() => onTogglePart(p)}
                       onDoubleClick={() => onSoloPart(p)}
-                      title={`${on ? 'Mute' : 'Play'} ${p} — double-click to solo`}
+                      title={`${on ? 'Mute' : 'Play'} ${p} (double-click to solo)`}
                     >
                       {p}
                     </button>
@@ -194,7 +194,7 @@ export default function Controls({
               })}
             </div>
             {activeParts.length === 0 && (
-              <p className="hint">No voices selected — nothing will play.</p>
+              <p className="hint">No voices selected. Nothing will play.</p>
             )}
           </div>
         )}

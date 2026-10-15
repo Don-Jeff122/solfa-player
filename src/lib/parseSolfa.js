@@ -9,9 +9,9 @@ import {
 
 const KEY_COLON_RE = /^\s*(?:key|tonic)\s*[:=]\s*([a-gA-G][#b]?|[a-zA-Z])?\s*$/i
 const KEY_EQ_RE = /^\s*1\s*=\s*([a-gA-G][#b]?|[a-zA-Z])?\s*$/i
-// "Doh = A" — the tonic-sol-fa header printed on Ghanaian hymn sheets.
+// "Doh = A": the tonic-sol-fa header printed on Ghanaian hymn sheets.
 const DOH_KEY_RE = /^\s*doh\s*[:=]\s*([a-gA-G][#b]?)/i
-// "Key E Flat", "key f#", "tonic bb" — the word forms printed on hymn sheets.
+// "Key E Flat", "key f#", "tonic bb": the word forms printed on hymn sheets.
 // Not anchored at the end: printed headers carry trailing text like a composer
 // or poetic metre ("Key E Flat  10.10.10.10.  W.H. MONK 1823-1889.").
 const KEY_WORD_RE = /^\s*(?:key|tonic)\s*(?:[:=]\s*)?([a-gA-G])(?:\s*(flat|♭|b|sharp|♯|#|is))?/i
@@ -155,7 +155,7 @@ export function parseSolfa(text) {
         partHeaderForced = true
         continue
       }
-      // "[Bass]", "[bass]" — a bracketed voice header; other bracketed
+      // "[Bass]", "[bass]": a bracketed voice header; other bracketed
       // labels (verses, titles) are skipped below.
       const bracketPart = rawLine.match(/^\[\s*(bass|tenor|alto|soprano)\s*\]$/i)
       if (bracketPart) {
@@ -477,7 +477,7 @@ export function parseSolfa(text) {
       if (bar.openRepeat) {
         if (stack.length > 0) {
           return fail(
-            `Nested repeats in ${p.name} (bar ${bi + 1}) aren't supported yet — use one ${'|:'} ... ${':|'} at a time.`
+            `Nested repeats in ${p.name} (bar ${bi + 1}) aren't supported yet. Use one ${'|:'} ... ${':|'} at a time.`
           )
         }
         stack.push(bi)

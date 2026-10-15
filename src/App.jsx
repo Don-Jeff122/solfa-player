@@ -332,7 +332,7 @@ export default function App() {
     setSheetName('')
     setSavedMsg(
       saveError === 'storage'
-        ? 'Could not save — this browser is blocking storage.'
+        ? 'Could not save. This browser is blocking storage.'
         : `Saved “${name}”.`
     )
   }
@@ -367,7 +367,7 @@ export default function App() {
         <div>
           <h1>Solfa Piano</h1>
           <p className="tagline">
-            Type tonic solfa — or a full sheet with parts — and hear it on the piano.
+            Type tonic solfa, or a full sheet with parts, and hear it on the piano.
           </p>
         </div>
       </header>
@@ -492,53 +492,53 @@ export default function App() {
             <summary>Solfa syntax</summary>
             <ul>
               <li>
-                <b>Notes</b> — <code>Do Re Mi Fa So La Ti</code> or letters{' '}
+                <b>Notes</b>: <code>Do Re Mi Fa So La Ti</code> or letters{' '}
                 <code>D R M F S L T</code>
               </li>
               <li>
-                <b>Sharps</b> — <code>Di Ri Fi Si Li</code> raise do, re, fa, so, la by a
+                <b>Sharps</b>: <code>Di Ri Fi Si Li</code> raise do, re, fa, so, la by a
                 semitone
               </li>
               <li>
-                <b>Flats</b> — <code>Ra Me Se Le Te</code> lower them by a semitone, so{' '}
+                <b>Flats</b>: <code>Ra Me Se Le Te</code> lower them by a semitone, so{' '}
                 <code>Do Ra</code> is a falling semitone. They follow the key rather than
                 naming it: in <code>Key: G</code> the key&apos;s F# is <code>Ti</code>, while{' '}
                 <code>Fi</code> raises fa (C) to C#.
               </li>
               <li>
-                <b>Octave</b> — <code>Do'</code> up one octave, <code>,Do</code> down one
+                <b>Octave</b>: <code>Do'</code> up one octave, <code>,Do</code> down one
                 (repeatable, and they can be combined)
               </li>
               <li>
-                <b>Rest</b> — <code>0</code> or <code>rest</code>
+                <b>Rest</b>: <code>0</code> or <code>rest</code>
 </li>
               <li>
                 <b>Longer note</b> - add dashes: <code>Do-</code> = 2 beats, <code>Do---</code>{' '}
                 = 4 beats, or <code>Do(3)</code>
               </li>
               <li>
-                <b>Eighths &amp; triplets</b> — fractions: <code>Do(1/2)</code> = half a
+                <b>Eighths &amp; triplets</b>: fractions: <code>Do(1/2)</code> = half a
                 beat, <code>Do(1/3)</code> = triplet
               </li>
               <li>
-                <b>Dotted note</b> — a trailing dot adds half again: <code>Do.</code> = 1.5,{' '}
+                <b>Dotted note</b>: a trailing dot adds half again: <code>Do.</code> = 1.5,{' '}
                 <code>Do-.</code> = 3
               </li>
               <li>
-                <b>Key</b> — first line <code>Key: G</code> (or <code>tonic: D</code>,{' '}
+                <b>Key</b>: first line <code>Key: G</code> (or <code>tonic: D</code>,{' '}
                 <code>1=F#</code>)
               </li>
               <li>
-                <b>Meter &amp; bars</b> — a line like <code>Meter: 4/4</code> (or{' '}
+                <b>Meter &amp; bars</b>: a line like <code>Meter: 4/4</code> (or{' '}
                 <code>Time: 6/8</code>, a bare <code>4/4</code>, or <code>C</code>) sets the bar
                 length. Split the music into bars with <code>|</code>:{' '}
-                <code>Do Re | Mi Fa | So Do</code>. Bars must add up to the meter — the first
+                <code>Do Re | Mi Fa | So Do</code>. Bars must add up to the meter: the first
                 bar may be a short pickup and the last may finish the phrase. A wrong bar is an
                 error that names the part and counts the beats, so slips in a hymn are caught
                 before you hear them.
               </li>
               <li>
-                <b>Real choir sheet</b> — paste a hymnal line straight in:{' '}
+                <b>Real choir sheet</b>: paste a hymnal line straight in:{' '}
                 <code>{'{ m :- /m :r | d :- /s :- }'}</code>. Beat marks{' '}
                 <code>:</code> and <code>/</code> split each bar into beats, <code>-</code>{' '}
                 holds a beat, <code>0</code> rests, and <code>de fe se le lo ta</code> are the
@@ -548,45 +548,45 @@ export default function App() {
                 automatically.
               </li>
               <li>
-                <b>Repeats</b> — <code>|: Do Re :|</code> plays the section twice. A{' '}
+                <b>Repeats</b>: <code>|: Do Re :|</code> plays the section twice. A{' '}
                 <code>:|</code> with no <code>|:</code> repeats from the song start.
               </li>
               <li>
-                <b>First &amp; second endings</b> —{' '}
+                <b>First &amp; second endings</b>:{' '}
                 <code>|: Do Re | 1. Mi Fa :| 2. So Do |</code> plays Do Re Mi Fa, then Do Re So
                 Do. All parts must share the same bars and repeats, or the song is flagged as
                 misaligned.
               </li>
               <li>
-                <b>Metronome</b> — with a meter in the sheet, the <code>Metronome</code> button
+                <b>Metronome</b>: with a meter in the sheet, the <code>Metronome</code> button
                 ticks each bar&apos;s downbeat while playing and while recording.
               </li>
               <li>
-                <b>Parts</b> — put <code>Bass</code>, <code>Tenor</code>, <code>Alto</code>,{' '}
+                <b>Parts</b>: put <code>Bass</code>, <code>Tenor</code>, <code>Alto</code>,{' '}
                 <code>Soprano</code> (or <code>[Any Name]</code>) on its own line, then its
                 notes. Repeat a name to continue that voice on a new line.
               </li>
               <li>
-                <b>Voice octaves</b> — Soprano and Alto play at written pitch, Tenor an
+                <b>Voice octaves</b>: Soprano and Alto play at written pitch, Tenor an
                 octave below and Bass two octaves below. Use <code>−</code>/<code>+</code> next
                 to a voice to move just that one; the global <code>Octave</code> dropdown moves
                 them all. Marks like <code>Do'</code> still apply on top of a voice&apos;s own
                 octave.
               </li>
               <li>
-                <b>Sound</b> — the <code>Sound</code> dropdown changes the instrument, and it
+                <b>Sound</b>: the <code>Sound</code> dropdown changes the instrument, and it
                 applies to playback, the keys you tap and the recorded WAV alike. Try{' '}
                 <code>Piano</code> for the default, <code>Church Organ</code> for hymns,{' '}
                 <code>Hymn Organ</code> for a warm sustained pedal-and-mixture tone, and{' '}
                 <code>Voice (ah)</code> to sing the solfa back at you.
               </li>
               <li>
-                <b>Repeat</b> — with <code>Repeat</code> switched on the song keeps playing
+                <b>Repeat</b>: with <code>Repeat</code> switched on the song keeps playing
                 over and over, handy for practising a hymn, until you press <code>Stop</code>.
                 Switching it off mid-song lets the current pass finish.
               </li>
               <li>
-                <b>Sustain</b> — the <code>Sustain</code> dropdown adds extra ring-out after each
+                <b>Sustain</b>: the <code>Sustain</code> dropdown adds extra ring-out after each
                 note so chords keep sounding. <code>Off</code> leaves the instrument&apos;s own
                 release alone; <code>Long</code> suits slow hymn singing.
               </li>
@@ -647,21 +647,21 @@ export default function App() {
             )}
             {!audioError && activeParts.length === 0 && sequences && !isPlaying && (
               <span className="status-error">
-                No voices selected — click a part, or All, to hear anything.
+                No voices selected. Click a part, or All, to hear anything.
               </span>
             )}
             {!audioError && error && <span className="status-error">{error}</span>}
             {!error && rendering && <span className="status-busy">Rendering audio…</span>}
             {!error && !rendering && wavUrl && (
               <span className="status-ok">
-                Recording ready — use “Download” to save the WAV.
+                Recording ready. Use “Download” to save the WAV.
               </span>
             )}
           </div>
 
           <p className="tip">
-            Tip: click any key to play it. Use the Part selector to hear one part alone — e.g. the
-            Bass — or all parts together.
+            Tip: click any key to play it. Use the Part selector to hear one part alone (for
+            example, the Bass), or all parts together.
           </p>
         </section>
       </div>

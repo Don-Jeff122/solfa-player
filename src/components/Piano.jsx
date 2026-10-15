@@ -35,7 +35,7 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
     >
       <div className="piano-nameplate">
         <span>
-          {midiName(start)} – {midiName(end)}
+          {midiName(start)}-{midiName(end)}
         </span>
       </div>
       <div className="piano-scroll">

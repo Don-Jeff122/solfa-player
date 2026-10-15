@@ -301,7 +301,7 @@ export function voiceSources(voice) {
  *
  * An additive instrument builds one oscillator per harmonic, so four parts of
  * organ ask the browser for dozens of them a note. A preset flagged `wave`
- * folds its whole-number harmonics into a single PeriodicWave — the identical
+ * folds its whole-number harmonics into a single PeriodicWave, the identical
  * Fourier sum, on one node. Harmonics that do not divide the frequency (the
  * organ's 0.5 pedal rank, a bell's 2.76) cannot be expressed that way and stay
  * as their own oscillators.

@@ -38,7 +38,7 @@ export const HYMN_WORDS = Object.freeze({
 
 export const HYMN_ROW_VOICES = ['Soprano', 'Alto', 'Tenor', 'Bass']
 
-// "S: d :d", "A1: m :-", "L: O nyan ko pon" — the domisol-style row headers.
+// "S: d :d", "A1: m :-", "L: O nyan ko pon": the domisol-style row headers.
 // Uppercase only: a lower-case row like `s :- /s :f` is a solfa line, not a
 // voice header, and must stay in its braced block.
 export const HYMN_PREFIX_RE = /^\s*([SATBL])\d*\s*[:：](.*)$/
@@ -53,7 +53,7 @@ const SUBSCRIPT_MARKS = ['\u2081', '\u2082', '\u2083']
  * A note line is real-sheet style when it carries the glyphs only real sheets
  * use: `/`, braces, a part header, or a bare beat-colon. Repeat bar-lines
  * (`|:`, `:|`) and plain `|` belong to classic sheets too, so a `:` glued to a
- * bar glyph is ignored here — that keeps every existing repeat sheet classic.
+ * bar glyph is ignored here, which keeps every existing repeat sheet classic.
  */
 export function looksHymnal(line) {
   if (!line) return false
