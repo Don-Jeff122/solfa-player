@@ -69,24 +69,45 @@ describe('rhythm grammar', () => {
     expect(beatsOf('Do(1/8)')).toBe(0.125)
   })
 
-  it('reads dotted values', () => {
-    expect(beatsOf('Do.')).toBe(1.5)
-    expect(beatsOf('Do..')).toBe(1.75)
-    expect(beatsOf('Do-.')).toBe(3)
-    expect(beatsOf('Do(1/2).')).toBe(0.75)
+  it('splits a beat in two at a dot', () => {
+    const r = parseSolfa('Do.Re')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    expect(r.result.parts[0].notes.map((n) => n.beats)).toEqual([0.5, 0.5])
+  })
+
+  it('reads an empty side of a dot as a rest', () => {
+    const trailing = parseSolfa('Do.')
+    expect(trailing.ok).toBe(true)
+    expect(trailing.result.parts[0].notes.map((n) => n.solfa)).toEqual(['do', null])
+    expect(trailing.result.parts[0].notes.map((n) => n.beats)).toEqual([0.5, 0.5])
+
+    const leading = parseSolfa('.Do')
+    expect(leading.ok).toBe(true)
+    expect(leading.result.parts[0].notes.map((n) => n.solfa)).toEqual([null, 'do'])
+  })
+
+  it('rejects more than one dot in a beat', () => {
+    expect(parseSolfa('Do.Re.Mi').ok).toBe(false)
+    expect(parseSolfa('Do..Re').ok).toBe(false)
+  })
+
+  it('rejects a dot combined with a dash or a length', () => {
+    expect(parseSolfa('Do-.Re').ok).toBe(false)
+    expect(parseSolfa('Do(2).Re').ok).toBe(false)
   })
 
   it('reads rests in the same forms', () => {
     expect(beatsOf('0')).toBe(1)
     expect(beatsOf('0-')).toBe(2)
     expect(beatsOf('0(2)')).toBe(2)
-    expect(beatsOf('0-.')).toBe(3)
     expect(beatsOf('rest-')).toBe(2)
   })
 
   it('still accepts octave marks alongside rhythm', () => {
     expect(beatsOf("Do'(1/2)")).toBe(0.5)
-    expect(beatsOf(",Do-.")).toBe(3)
+    const r = parseSolfa(',Do.Re')
+    expect(r.ok, r.ok ? '' : r.error.message).toBe(true)
+    expect(r.result.parts[0].notes.map((n) => n.down)).toEqual([1, 0])
   })
 
   it('rejects malformed durations instead of guessing', () => {
@@ -96,7 +117,7 @@ describe('rhythm grammar', () => {
 
   it('accumulates a mixed rhythm line', () => {
     const seqs = notesOf('Do Do- Do(1/2) Do.', ALL_PARTS)
-    expect(seqs[0].notes.map((n) => n.beats)).toEqual([1, 2, 0.5, 1.5])
+    expect(seqs[0].notes.map((n) => n.beats)).toEqual([1, 2, 0.5, 0.5, 0.5])
   })
 })
 

@@ -244,9 +244,9 @@ describe('parseSolfa: meter and bars', () => {
     expect(parsed.error.message).toMatch(/Bar 2 of Main has 2 beats, but 4\/4 time expects 4/)
   })
 
-  it('counts dotted metric lengths like 3/4 and 6/8', () => {
+  it('counts split-beat and metric lengths like 3/4 and 6/8', () => {
     expect(parseSolfa('Meter: 3/4\nDo- Re | Do- Re').ok).toBe(true)
-    expect(parseSolfa('Meter: 6/8\nDo. Re. | Mi Fa So').ok).toBe(true)
+    expect(parseSolfa('Meter: 6/8\nDo.Re Mi Fa | Do.Re Mi Fa').ok).toBe(true)
   })
 
   it('flags a bar that is too long too', () => {

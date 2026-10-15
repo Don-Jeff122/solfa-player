@@ -521,8 +521,10 @@ export default function App() {
                 beat, <code>Do(1/3)</code> = triplet
               </li>
               <li>
-                <b>Dotted note</b>: a trailing dot adds half again: <code>Do.</code> = 1.5,{' '}
-                <code>Do-.</code> = 3
+                <b>Split a beat</b>: a dot divides one beat in two: <code>Do.Re</code> is do and
+                re sharing a beat. An empty side is a rest, so <code>.Do</code> and{' '}
+                <code>Do.</code> each start or end with half a beat of rest. Only one dot splits
+                a beat.
               </li>
               <li>
                 <b>Key</b>: first line <code>Key: G</code> (or <code>tonic: D</code>,{' '}
@@ -540,8 +542,9 @@ export default function App() {
               <li>
                 <b>Real choir sheet</b>: paste a hymnal line straight in:{' '}
                 <code>{'{ m :- /m :r | d :- /s :- }'}</code>. Beat marks{' '}
-                <code>:</code> and <code>/</code> split each bar into beats, <code>-</code>{' '}
-                holds a beat, <code>0</code> rests, and <code>de fe se le lo ta</code> are the
+                <code>:</code> and <code>/</code> split each bar into beats, <code>.</code>{' '}
+                splits one beat in two, <code>-</code> holds a beat, <code>0</code> rests, and{' '}
+                <code>de fe se le lo ta</code> are the
                 real-sheet chromatics. A subscript like <code>f₁</code> or <code>t₁</code> is an
                 octave down. Title, lyric and composer lines are ignored; the rows of a{' '}
                 <code>{'{ }'}</code> block become Soprano, Alto, Tenor and Bass

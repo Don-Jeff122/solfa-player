@@ -87,9 +87,10 @@ describe('duration formatting', () => {
     expect(formatDuration(0.25)).toBe('(1/4)')
   })
 
-  it('writes a dot after the base length, which is how solfa shows a dot', () => {
-    expect(formatDuration(1.5, true)).toBe('.')
-    expect(formatDuration(3, true)).toBe('(2).')
+  it('writes filled and dotted lengths as exact fractions', () => {
+    expect(formatDuration(1.5)).toBe('(3/2)')
+    expect(formatDuration(0.75)).toBe('(3/4)')
+    expect(formatDuration(3)).toBe('(3)')
   })
 })
 
@@ -126,7 +127,7 @@ describe('reading a page with printed solfa', () => {
       { beats: 1, dotted: true },
     ])
     const result = readStaffRhythm(pageOf(canvas), words)
-    expect(result.parts[0].tokens).toEqual(['do(2)', 're(4)', 'mi.'])
+    expect(result.parts[0].tokens).toEqual(['do(2)', 're(4)', 'mi(3/2)'])
   })
 
   it('turns beamed eighths into halves', () => {

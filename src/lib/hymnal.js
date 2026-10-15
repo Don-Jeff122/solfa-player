@@ -3,6 +3,8 @@
 // A church sheet spells things slightly differently from classic word-solfa:
 //
 //   - `:` and `/` are beat gridlines: every marker advances one beat slot.
+//   - `.` divides the current beat in two: `d.r` is do and re sharing one beat.
+//     A side with no note is a rest, so `.d` is a half rest then do.
 //   - `-` holds a beat; `0` is a rest; a note letter is one beat.
 //   - A subscript digit (f1, t₁) means an octave below, as it is printed.
 //   - The meters are often hidden: a bar like `m :- /m :r` is four beats.
@@ -76,31 +78,43 @@ export function scanHymnalLine(text, lineNo, partName) {
   const s = String(text ?? '')
   const events = []
   let i = 0
-  let cell = { parts: [], subdivided: false }
+  let cell = { parts: [], dots: 0, seg: 0 }
   let lastSound = null
   let justEnded = false
 
   const fail = (message) => ({ ok: false, message })
 
+  // A beat is split by its dots into equal segments. Each segment is filled by
+  // the notes sitting in it (which then split that segment equally), or is a
+  // rest when nothing sits there.
   const finalizeCell = () => {
-    const { parts, subdivided } = cell
+    const { parts, dots } = cell
     if (parts.length === 0) return
-    const share = subdivided ? 1 / parts.length : 1
-    for (const part of parts) {
-      if (part.type === 'hold') {
-        if (lastSound) lastSound.beats += share
-        else events.push({ type: 'note', token: '-', solfa: null, up: 0, down: 0, beats: share })
+    const segments = dots + 1
+    const segShare = 1 / segments
+    for (let seg = 0; seg < segments; seg++) {
+      const group = parts.filter((p) => p.seg === seg)
+      if (group.length === 0) {
+        events.push({ type: 'note', token: '0', solfa: null, up: 0, down: 0, beats: segShare })
         continue
       }
-      const beats = subdivided ? share : 1 + (part.extra || 0)
-      const ev =
-        part.type === 'rest'
-          ? { type: 'note', token: '0', solfa: null, up: 0, down: 0, beats }
-          : { type: 'note', token: part.token, solfa: part.solfa, up: part.up, down: part.down, beats }
-      events.push(ev)
-      lastSound = ev
+      const share = segShare / group.length
+      for (const part of group) {
+        if (part.type === 'hold') {
+          if (lastSound) lastSound.beats += share
+          else events.push({ type: 'note', token: '-', solfa: null, up: 0, down: 0, beats: share })
+          continue
+        }
+        const beats = segments > 1 || group.length > 1 ? share : 1 + (part.extra || 0)
+        const ev =
+          part.type === 'rest'
+            ? { type: 'note', token: '0', solfa: null, up: 0, down: 0, beats }
+            : { type: 'note', token: part.token, solfa: part.solfa, up: part.up, down: part.down, beats }
+        events.push(ev)
+        lastSound = ev
+      }
     }
-    cell = { parts: [], subdivided: false }
+    cell = { parts: [], dots: 0, seg: 0 }
   }
 
   const matchBarTokenAt = (idx) => {
@@ -123,7 +137,7 @@ export function scanHymnalLine(text, lineNo, partName) {
       continue
     }
 
-    if (ch === ':' || ch === '/' || ch === '.') {
+    if (ch === ':' || ch === '/') {
       const bar = matchBarTokenAt(i)
       if (bar) {
         finalizeCell()
@@ -133,6 +147,21 @@ export function scanHymnalLine(text, lineNo, partName) {
         finalizeCell()
         i++
       }
+      justEnded = false
+      continue
+    }
+
+    if (ch === '.') {
+      // One dot splits the current beat in two; a second has no meaning.
+      if (cell.dots >= 1) {
+        return fail(
+          `More than one dot in one beat on line ${lineNo} (part "${partName}"). ` +
+            `A dot splits a beat in two, so only one is allowed.`
+        )
+      }
+      cell.dots = 1
+      cell.seg = 1
+      i++
       justEnded = false
       continue
     }
@@ -160,8 +189,7 @@ export function scanHymnalLine(text, lineNo, partName) {
         continue
       }
       if (ch === '0') {
-        if (cell.parts.length) cell.subdivided = true
-        cell.parts.push({ type: 'rest' })
+        cell.parts.push({ type: 'rest', seg: cell.seg })
         i++
         justEnded = true
         continue
@@ -178,12 +206,11 @@ export function scanHymnalLine(text, lineNo, partName) {
     if (ch === '-') {
       const last = cell.parts[cell.parts.length - 1]
       if (cell.parts.length === 0) {
-        cell.parts.push({ type: 'hold' })
-      } else if (!cell.subdivided && last && last.type === 'note' && justEnded) {
+        cell.parts.push({ type: 'hold', seg: cell.seg })
+      } else if (cell.seg === 0 && cell.parts.length === 1 && last && last.type === 'note' && justEnded) {
         last.extra += 1
       } else {
-        cell.parts.push({ type: 'hold' })
-        cell.subdivided = true
+        cell.parts.push({ type: 'hold', seg: cell.seg })
       }
       i++
       justEnded = true
@@ -205,7 +232,7 @@ export function scanHymnalLine(text, lineNo, partName) {
       if (solfa == null) {
         return fail(
           `Unrecognized note "${raw}" on line ${lineNo} (part "${partName}"). ` +
-            `Real sheets use d r m f s l t (or de fe se le lo ta) with : and / between beats and - for holds.`
+            `Real sheets use d r m f s l t (or de fe se le lo ta) with : / and . between beats and - for holds.`
         )
       }
       i = j
@@ -219,11 +246,10 @@ export function scanHymnalLine(text, lineNo, partName) {
         else up++
         i++
       }
-      if (cell.parts.length) cell.subdivided = true
       if (solfa === 'rest') {
-        cell.parts.push({ type: 'rest' })
+        cell.parts.push({ type: 'rest', seg: cell.seg })
       } else {
-        cell.parts.push({ type: 'note', token: raw, solfa, up, down, extra: 0 })
+        cell.parts.push({ type: 'note', token: raw, solfa, up, down, extra: 0, seg: cell.seg })
       }
       justEnded = true
       continue

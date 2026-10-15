@@ -31,9 +31,9 @@ function keyFromHeader(line) {
   return null
 }
 const NOTE_TOKEN_RE =
-  /^(,*)(sol|so|do|re|mi|fa|la|ti|di|ri|fi|si|li|ra|me|se|le|te|[dDmMrRfFtTsSlL])(['’,]*)(-+|\(\d{1,3}(?:\/\d{1,3})?\))?(\.*)$/i
-const REST_WORD_RE = /^rest(-+|\(\d{1,3}(?:\/\d{1,3})?\))?(\.*)$/i
-const REST_ZERO_RE = /^0(-+|\(\d{1,3}(?:\/\d{1,3})?\))?(\.*)$/
+  /^(,*)(sol|so|do|re|mi|fa|la|ti|di|ri|fi|si|li|ra|me|se|le|te|[dDmMrRfFtTsSlL])(['’,]*)(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/i
+const REST_WORD_RE = /^rest(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/i
+const REST_ZERO_RE = /^0(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/
 
 // Meter headers: "Meter: 4/4", "Time 6/8", a lone "4/4", or C for common time.
 const METER_NAMED_RE = /^\s*(?:meter|time)\s*[:=]?\s*([1-9]\d*)\s*\/\s*([1-9]\d*)\s*$/i
@@ -50,17 +50,13 @@ const ENDING_UNSUPPORTED_RE = /^(\(\d+\)|\d+\.)$/
 // Standard coda/da-capo phrasing this app does not play yet.
 const MARKING_RE = /^(?:d\.?s\.?|d\.?c\.?|fine|coda|segno|dal|capo|da)$/i
 
-function applyDots(beats, dots) {
-  // One dot adds half, two add three quarters: 1 -> 1.5 -> 1.75.
-  return dots > 0 ? beats * (2 - Math.pow(2, -dots)) : beats
-}
-
 /**
- * Note length in beats. Supports plain beats in parentheses ("(3)"), fractions
- * ("(1/2)", "(3/2)") so eighths and dotted values can be written exactly.
- * Returns NaN for a length that makes no sense, so the caller can reject it.
+ * Note length in beats. Supports plain beats in parentheses ("(3)") and
+ * fractions ("(1/2)", "(3/2)") so eighths and dotted values can be written
+ * exactly. Returns NaN for a length that makes no sense, so the caller can
+ * reject it.
  */
-function parseBeats(durToken, dots = 0) {
+function parseBeats(durToken) {
   let beats = 1
   if (durToken) {
     if (durToken.startsWith('(')) {
@@ -74,10 +70,8 @@ function parseBeats(durToken, dots = 0) {
     }
   }
   if (!Number.isFinite(beats) || beats <= 0) return NaN
-  return applyDots(beats, dots)
+  return beats
 }
-
-const countDots = (s) => (s ? s.length : 0)
 
 const barLength = (bar) => bar.notes.reduce((s, n) => s + n.beats, 0)
 
@@ -394,9 +388,65 @@ export function parseSolfa(text) {
         )
       }
 
+      // A dot splits one beat in two: `Do.Re` is do and re sharing a beat. A
+      // side with no note is a rest, so `.Do` and `Do.` each start or end with a
+      // half-beat rest. Only one dot splits a beat, and the halves are plain.
+      if (token.includes('.')) {
+        const sides = token.split('.')
+        if (sides.length > 2) {
+          return fail(
+            `Only one dot splits a beat, so "${token}" on line ${lineNo} (part "${part.name}") has too many.`
+          )
+        }
+        const halves = []
+        for (const side of sides) {
+          if (side === '') {
+            halves.push({ solfa: null, up: 0, down: 0 })
+            continue
+          }
+          if (/[-()]/.test(side)) {
+            return fail(
+              `A split beat takes plain notes, so "${side}" in "${token}" on line ${lineNo} ` +
+                `(part "${part.name}") can't carry a dash or a length.`
+            )
+          }
+          if (REST_WORD_RE.test(side) || REST_ZERO_RE.test(side)) {
+            halves.push({ solfa: null, up: 0, down: 0 })
+            continue
+          }
+          const m = side.match(NOTE_TOKEN_RE)
+          if (!m) {
+            return fail(
+              `Unrecognized note "${side}" in "${token}" on line ${lineNo} (part "${part.name}"). ` +
+                `A split beat holds two notes, like Do.Re or ,Do.So.`
+            )
+          }
+          const base = m[2].toLowerCase()
+          let solfa = LETTER_TO_SOLFA[base] || base
+          if (solfa === 'sol') solfa = 'so'
+          const marks = m[3] || ''
+          halves.push({
+            solfa,
+            up: (marks.match(/['\u2019]/g) || []).length,
+            down: (marks.match(/,/g) || []).length + m[1].length,
+          })
+        }
+        for (const half of halves) {
+          pushNote({
+            token,
+            solfa: half.solfa,
+            up: half.up,
+            down: half.down,
+            beats: 0.5,
+            line: lineNo,
+          })
+        }
+        continue
+      }
+
       if (REST_WORD_RE.test(token)) {
         const g = REST_WORD_RE.exec(token)
-        const beats = parseBeats(g[1], countDots(g[2]))
+        const beats = parseBeats(g[1])
         if (Number.isNaN(beats)) {
           return fail(`Invalid note length in "${token}" on line ${lineNo}.`)
         }
@@ -406,7 +456,7 @@ export function parseSolfa(text) {
 
       if (REST_ZERO_RE.test(token)) {
         const g = REST_ZERO_RE.exec(token)
-        const beats = parseBeats(g[1], countDots(g[2]))
+        const beats = parseBeats(g[1])
         if (Number.isNaN(beats)) {
           return fail(`Invalid note length in "${token}" on line ${lineNo}.`)
         }
@@ -430,7 +480,7 @@ export function parseSolfa(text) {
       const leadingDown = nm[1].length
       const up = (marks.match(/['\u2019]/g) || []).length
       const down = (marks.match(/,/g) || []).length + leadingDown
-      const beats = parseBeats(nm[4], countDots(nm[5]))
+      const beats = parseBeats(nm[4])
       if (Number.isNaN(beats)) {
         return fail(`Invalid note length in "${token}" on line ${lineNo}.`)
       }

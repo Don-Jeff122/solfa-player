@@ -21,12 +21,10 @@ const PART_LABELS = new Map([
 // are rounded to the nearest of these rather than written as decimals.
 const DENOMINATORS = [1, 2, 3, 4, 6, 8, 12, 16]
 
-/** A beat count as solfa duration syntax, e.g. 0.5 -> "(1/2)", 3 dotted -> "(2)." */
-export function formatDuration(beats, dotted = false) {
-  const base = dotted ? beats / 1.5 : beats
-  let body = ''
-  if (Math.abs(base - 1) > 1e-6) body = `(${toFraction(base)})`
-  return body + (dotted ? '.' : '')
+/** A beat count as solfa duration syntax, e.g. 0.5 -> "(1/2)", 1.5 -> "(3/2)", 3 -> "(3)" */
+export function formatDuration(beats) {
+  if (Math.abs(beats - 1) <= 1e-6) return ''
+  return `(${toFraction(beats)})`
 }
 
 function toFraction(value) {
@@ -168,7 +166,7 @@ export function pairWithNotes(words, notes, tolerance) {
 function buildToken(word, note) {
   const base = convertChunks([word.text]).replace(/-+$/, '')
   if (!base) return ''
-  return base + formatDuration(note.beats, note.dotted)
+  return base + formatDuration(note.beats)
 }
 
 // Only the four SATB names are bare keywords in the grammar; anything else has

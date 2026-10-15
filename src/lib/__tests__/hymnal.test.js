@@ -83,6 +83,40 @@ describe('scanHymnalLine', () => {
     expect(beats[2]).toBeCloseTo(0.5)
   })
 
+  it('splits a beat in two at a dot', () => {
+    const { ok, events } = scanHymnalLine('d : d . e / d : d', 1, 'Tenor')
+    expect(ok).toBe(true)
+    expect(events.map((e) => [e.solfa, e.beats])).toEqual([
+      ['do', 1],
+      ['do', 0.5],
+      ['di', 0.5],
+      ['do', 1],
+      ['do', 1],
+    ])
+  })
+
+  it('reads an empty side of a dot as a rest', () => {
+    const trailing = scanHymnalLine('d.', 1, 'Soprano')
+    expect(trailing.ok).toBe(true)
+    expect(trailing.events.map((e) => [e.solfa, e.beats])).toEqual([
+      ['do', 0.5],
+      [null, 0.5],
+    ])
+
+    const leading = scanHymnalLine('.d /r :d', 1, 'Soprano')
+    expect(leading.ok).toBe(true)
+    expect(leading.events.slice(0, 2).map((e) => [e.solfa, e.beats])).toEqual([
+      [null, 0.5],
+      ['do', 0.5],
+    ])
+  })
+
+  it('rejects more than one dot in a beat', () => {
+    const { ok, message } = scanHymnalLine('d.r.s', 1, 'Soprano')
+    expect(ok).toBe(false)
+    expect(message).toMatch(/More than one dot/)
+  })
+
   it('reports unknown words with a real-sheet hint', () => {
     const { ok, message } = scanHymnalLine('q :-', 1, 'Alto')
     expect(ok).toBe(false)
