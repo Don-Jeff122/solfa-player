@@ -644,12 +644,43 @@ export class Synth {
       return cursor >= t0 + longestBeats * beat
     }
 
+    const flush = () => {
+      // When the page is backgrounded (common on mobile), setInterval is heavily
+      // throttled and the last slices can be delayed until much later — long
+      // enough for the browser to stop audio. Flush the rest now.
+      if (advanceTimer) {
+        clearInterval(advanceTimer)
+        advanceTimer = null
+      }
+      while (!scheduleSlice()) {
+        // Keep scheduling chunks until everything up to the end is built.
+      }
+    }
+
+    let visHandler = null
+    if (typeof document !== 'undefined') {
+      visHandler = () => {
+        if (document.visibilityState === 'visible' && ctx.state === 'suspended') {
+          ctx.resume()
+        }
+        // If we lose visibility mid-playback, flush remaining to avoid delays.
+        if (document.visibilityState === 'hidden' && !stopped) {
+          flush()
+        }
+      }
+      document.addEventListener('visibilitychange', visHandler, { passive: true })
+    }
+
     const stop = () => {
       if (stopped) return
       stopped = true
       if (advanceTimer) {
         clearInterval(advanceTimer)
         advanceTimer = null
+      }
+      if (visHandler) {
+        document.removeEventListener('visibilitychange', visHandler)
+        visHandler = null
       }
       const now = ctx.currentTime
       bus.gain.cancelScheduledValues(now)
@@ -668,14 +699,21 @@ export class Synth {
 
     this.lastError = null
     this.lastBudget = budget
-    const allScheduled = scheduleSlice()
-    if (!allScheduled) {
-      advanceTimer = setInterval(() => {
-        if (scheduleSlice()) {
-          clearInterval(advanceTimer)
-          advanceTimer = null
-        }
-      }, Math.max(250, (window * 1000) / 2))
+    // If the tab starts hidden (user opened in background), don't rely on
+    // throttled timers: schedule everything immediately.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      flush()
+      advanceTimer = null
+    } else {
+      const allScheduled = scheduleSlice()
+      if (!allScheduled) {
+        advanceTimer = setInterval(() => {
+          if (scheduleSlice()) {
+            clearInterval(advanceTimer)
+            advanceTimer = null
+          }
+        }, Math.max(250, (window * 1000) / 2))
+      }
     }
 
     seqs.forEach((seq, seqIndex) => {
