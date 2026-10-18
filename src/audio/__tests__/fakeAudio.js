@@ -1,4 +1,4 @@
-/**
+﻿/**
  * A minimal Web Audio stand-in.
  *
  * There is no real AudioContext in the test environment, and the bugs that
@@ -159,6 +159,8 @@ export function createFakeContext({ sampleRate = 44100 } = {}) {
         threshold: createParam(log, 'threshold'),
         knee: createParam(log, 'knee'),
         ratio: createParam(log, 'ratio'),
+        attack: createParam(log, 'attack'),
+        release: createParam(log, 'release'),
       })
     },
     createBufferSource() {

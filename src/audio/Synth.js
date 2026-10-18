@@ -1,10 +1,23 @@
-import { midiToFreq, sequenceBeats } from '../lib/notes.js'
+﻿import { midiToFreq, sequenceBeats } from '../lib/notes.js'
 import { getVoice, voiceBanks, voiceFormants } from './voices.js'
 
 // Exponential ramps cannot reach zero, so every envelope bottoms out here.
 const MIN_GAIN = 0.0001
 const NOISE_SECONDS = 2.5
 const extraStop = 0.12
+export function deviceProfile() {
+  if (typeof navigator === 'undefined') {
+    return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: MAX_SIMULTANEOUS_NOTES, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
+  }
+  const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+  const cores = navigator.hardwareConcurrency || 8
+  const lowPower = coarse && cores <= 6
+  if (lowPower) {
+    return { maxNodes: 420, maxNotes: 24, lookahead: 1.2, latencyHint: 'playback', lowPower: true }
+  }
+  return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: 48, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
+}
+
 
 /**
  * How many audio nodes one song is allowed to build.
@@ -170,7 +183,12 @@ export class Synth {
   _ensureCtx() {
     if (!this.ctx) {
       const Ctor = window.AudioContext || window.webkitAudioContext
-      this.ctx = new Ctor()
+      const prof = deviceProfile()
+      try {
+        this.ctx = new Ctor({ latencyHint: prof.latencyHint })
+      } catch {
+        this.ctx = new Ctor()
+      }
     }
     if (this.ctx.state === 'suspended') this.ctx.resume()
     return this.ctx
