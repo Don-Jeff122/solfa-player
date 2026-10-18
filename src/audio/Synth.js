@@ -181,6 +181,21 @@ export class Synth {
   }
 
   _ensureCtx() {
+    // Safari moves a context to 'interrupted' after screen lock or long idle,
+    // and may 'close' it outright. A cached context in either state is dead:
+    // play and tap would schedule into silence until a page reload. Drop it
+    // (and everything bound to it) so the next call builds a fresh one.
+    if (this.ctx && (this.ctx.state === 'closed' || this.ctx.state === 'interrupted')) {
+      this.ctx = null
+      this._out = null
+      this._outCtx = null
+      this._noiseCtx = null
+      this._noiseBuffer = null
+      this._waveCtx = null
+      this._waveCache = null
+      this.lastError = null
+      this.lastBudget = null
+    }
     if (!this.ctx) {
       const Ctor = window.AudioContext || window.webkitAudioContext
       const prof = deviceProfile()
@@ -190,7 +205,7 @@ export class Synth {
         this.ctx = new Ctor()
       }
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume()
+    if (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted') this.ctx.resume()
     return this.ctx
   }
 
@@ -249,7 +264,8 @@ export class Synth {
    * tap instead feeds the same chain the next tap uses.
    */
   _output(ctx) {
-    if (!this._out || this._outCtx !== ctx) {
+    const dead = ctx && (ctx.state === 'closed' || ctx.state === 'interrupted')
+    if (!this._out || this._outCtx !== ctx || dead) {
       this._outCtx = ctx
       this._out = this._masterChain(ctx, ctx.destination)
     }
@@ -678,7 +694,10 @@ export class Synth {
     let visHandler = null
     if (typeof document !== 'undefined') {
       visHandler = () => {
-        if (document.visibilityState === 'visible' && ctx.state === 'suspended') {
+        if (
+          document.visibilityState === 'visible' &&
+          (ctx.state === 'suspended' || ctx.state === 'interrupted')
+        ) {
           ctx.resume()
         }
         // If we lose visibility mid-playback, flush remaining to avoid delays.
