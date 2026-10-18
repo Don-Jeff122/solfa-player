@@ -65,11 +65,14 @@ function createNode(log, kind, extra = {}) {
     connected: [],
     started: false,
     stopped: false,
+    disconnected: false,
     connect(dest) {
       node.connected.push(dest)
       return dest
     },
-    disconnect() {},
+    disconnect() {
+      node.disconnected = true
+    },
     start(time) {
       if (node.started) throw new Error(`${kind} started twice`)
       if (typeof time !== 'number' || !Number.isFinite(time)) {

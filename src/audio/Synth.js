@@ -1,4 +1,4 @@
-﻿import { midiToFreq, sequenceBeats } from '../lib/notes.js'
+import { midiToFreq, sequenceBeats } from '../lib/notes.js'
 import { getVoice, voiceBanks, voiceFormants } from './voices.js'
 
 // Exponential ramps cannot reach zero, so every envelope bottoms out here.
@@ -13,7 +13,7 @@ export function deviceProfile() {
   const cores = navigator.hardwareConcurrency || 8
   const lowPower = coarse && cores <= 6
   if (lowPower) {
-    return { maxNodes: 420, maxNotes: 24, lookahead: 1.2, latencyHint: 'playback', lowPower: true }
+    return { maxNodes: 420, maxNotes: 36, lookahead: 1.2, latencyHint: 'playback', lowPower: true }
   }
   return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: 48, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
 }
@@ -40,7 +40,7 @@ export const MAX_NODES_PER_PLAYBACK = 900
  * score produces (a four-part hymn peaks at a dozen), and it is what guarantees
  * the plainest note always fits inside the budget.
  */
-export const MAX_SIMULTANEOUS_NOTES = 32
+export const MAX_SIMULTANEOUS_NOTES = 40
 
 /**
  * How far ahead playback schedules audio.
@@ -244,14 +244,35 @@ export class Synth {
 
   _masterChain(ctx, destination) {
     const bus = ctx.createGain()
-    bus.gain.value = 0.9
+    // Headroom for a full chord: dozens of notes sum well past 1.0, and the
+    // compressor should only catch the peaks rather than be driven into them.
+    bus.gain.value = 0.7
     const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -18
-    comp.knee.value = 20
-    comp.ratio.value = 6
+    comp.threshold.value = -12
+    comp.knee.value = 8
+    comp.ratio.value = 3
+    // A slower attack lets note onsets through cleanly; the default clamped
+    // them hard enough to sound like grit on every loud passage.
+    comp.attack.value = 0.01
+    comp.release.value = 0.25
     bus.connect(comp)
     comp.connect(destination)
-    return bus
+    // Both nodes have to come out of the graph, not just the bus: a compressor
+    // left connected to the destination still costs the audio thread on every
+    // render quantum, and a pile of them is what eventually distorts.
+    const dispose = () => {
+      try {
+        bus.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+      try {
+        comp.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
+    return { input: bus, dispose }
   }
 
   /**
@@ -267,7 +288,7 @@ export class Synth {
     const dead = ctx && (ctx.state === 'closed' || ctx.state === 'interrupted')
     if (!this._out || this._outCtx !== ctx || dead) {
       this._outCtx = ctx
-      this._out = this._masterChain(ctx, ctx.destination)
+      this._out = this._masterChain(ctx, ctx.destination).input
     }
     return this._out
   }
@@ -538,7 +559,8 @@ export class Synth {
       { voice: strippedBack(preset), cost: noteCost(strippedBack(preset)) },
       { voice: bare(preset), cost: noteCost(bare(preset)) },
     ]
-    const ceiling = MAX_NODES_PER_PLAYBACK
+    const ceiling = opts.maxNodes ?? MAX_NODES_PER_PLAYBACK
+    const maxNotes = opts.maxNotes ?? MAX_SIMULTANEOUS_NOTES
     const plainest = tiers[tiers.length - 1]
     // Headroom is reserved for one plainest note, so the budget is not blown by
     // more than a single plain note in the pathological case where every note
@@ -560,7 +582,7 @@ export class Synth {
 
       // Past the polyphony cap a note is dropped. A four-part hymn never gets
       // close, and this is the only path that can lose a note.
-      if (budget.liveNotes >= MAX_SIMULTANEOUS_NOTES) {
+      if (budget.liveNotes >= maxNotes) {
         budget.skipped++
         continue
       }
@@ -634,11 +656,13 @@ export class Synth {
       onNoteEnd,
       onDone,
       onError,
-      lookahead = LOOKAHEAD_SECONDS,
+      lookahead,
     } = {},
   ) {
     const ctx = this._ensureCtx()
-    const bus = this._masterChain(ctx, ctx.destination)
+    const chain = this._masterChain(ctx, ctx.destination)
+    const bus = chain.input
+    const profile = deviceProfile()
     const beat = 60 / tempo
     const timers = []
     const budget = newPlaybackBudget()
@@ -655,7 +679,7 @@ export class Synth {
     // four-part sheet asked the browser for thousands of them before a single
     // note sounded. Slices cover [cursor, cursor + window) with no overlap, so
     // each note is scheduled exactly once.
-    const window = Math.max(lookahead, LOOKAHEAD_MIN)
+    const window = Math.max(lookahead ?? profile.lookahead, LOOKAHEAD_MIN)
     let cursor = t0
     let advanceTimer = null
     let doneTimer = null
@@ -667,6 +691,8 @@ export class Synth {
         to,
         budget,
         metronome,
+        maxNodes: profile.maxNodes,
+        maxNotes: profile.maxNotes,
       })
       cursor = to
       // An error here used to vanish into an empty catch, which left the player
@@ -678,16 +704,24 @@ export class Synth {
       return cursor >= t0 + longestBeats * beat
     }
 
-    const flush = () => {
+    const flush = (budgetNodes = 500) => {
       // When the page is backgrounded (common on mobile), setInterval is heavily
       // throttled and the last slices can be delayed until much later — long
-      // enough for the browser to stop audio. Flush the rest now.
+      // enough for the browser to stop audio. Flush the rest now, a chunk at a
+      // time: handing the thread every remaining node in one pass stalls it.
       if (advanceTimer) {
         clearInterval(advanceTimer)
         advanceTimer = null
       }
-      while (!scheduleSlice()) {
-        // Keep scheduling chunks until everything up to the end is built.
+      const builtBefore = budget.built
+      let done = scheduleSlice()
+      while (!done && budget.built - builtBefore < budgetNodes) {
+        done = scheduleSlice()
+      }
+      if (!done && !stopped) {
+        setTimeout(() => {
+          if (!stopped) flush(budgetNodes)
+        }, 0)
       }
     }
 
@@ -723,13 +757,7 @@ export class Synth {
       bus.gain.cancelScheduledValues(now)
       bus.gain.setValueAtTime(Math.max(bus.gain.value, MIN_GAIN), now)
       bus.gain.exponentialRampToValueAtTime(MIN_GAIN, now + 0.05)
-      setTimeout(() => {
-        try {
-          bus.disconnect()
-        } catch {
-          /* already disconnected */
-        }
-      }, 120)
+      setTimeout(chain.dispose, 120)
       timers.forEach(clearTimeout)
       if (doneTimer) clearTimeout(doneTimer)
     }
@@ -774,6 +802,13 @@ export class Synth {
       }
       if (onDone) onDone()
       timers.forEach(clearTimeout)
+      // Release this pass's own master chain once the ring-out has died away.
+      // Only stopping used to disconnect it, so every pass that finished on its
+      // own — and Repeat restarts from onDone — left a live compressor on the
+      // output, and enough of them made the browser's audio thread distort and
+      // eventually fall silent.
+      const tailMs = (getVoice(voice).release + sustain + 0.5) * 1000
+      setTimeout(chain.dispose, tailMs)
     }, doneMs + 40)
 
     return { stop }
@@ -793,7 +828,7 @@ export class Synth {
     const duration = 0.08 + longestBeats * beat + tail
     const sampleRate = 44100
     const ctx = new OfflineAudioContext(1, Math.ceil(duration * sampleRate), sampleRate)
-    const bus = this._masterChain(ctx, ctx.destination)
+    const bus = this._masterChain(ctx, ctx.destination).input
 
     this._scheduleAll(ctx, bus, seqs, 0.08, beat, voice, sustain, { metronome })
 

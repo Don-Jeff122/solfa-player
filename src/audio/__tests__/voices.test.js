@@ -562,6 +562,22 @@ describe('synth voice graphs', () => {
     vi.useRealTimers()
   })
 
+  it('releases its master chain once a song finishes on its own', () => {
+    // Only stopping used to disconnect the bus, so every pass that ended by
+    // itself — and Repeat restarts from onDone — left another compressor on
+    // the output until the audio thread distorted and fell silent.
+    vi.useFakeTimers()
+    fake = installFakeAudio()
+    const synth = new Synth()
+    synth.play([{ notes: [{ midi: 60, beats: 1 }] }], { tempo: 120 })
+    const [comp] = nodesOfKind(fake.live.log, 'compressor')
+    expect(comp).toBeTruthy()
+    expect(comp.disconnected).toBe(false)
+    vi.advanceTimersByTime(10000)
+    expect(comp.disconnected).toBe(true)
+    vi.useRealTimers()
+  })
+
   it('never reports the end after the song is stopped', () => {
     // Repeat restarts the song from this callback, so it must not fire once
     // the player has been stopped or the sheet changed underneath it.
