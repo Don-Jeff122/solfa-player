@@ -166,6 +166,9 @@ export function createFakeContext({ sampleRate = 44100 } = {}) {
         release: createParam(log, 'release'),
       })
     },
+    createWaveShaper() {
+      return createNode(log, 'waveshaper', { curve: null, oversample: 'none' })
+    },
     createBufferSource() {
       return createNode(log, 'bufferSource', { buffer: null })
     },

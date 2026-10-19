@@ -19,7 +19,7 @@
  * starts and how quickly it darkens.
  *
  * Peaks are all kept within a narrow band of the piano's so no instrument is
- * noticeably quieter than another; the master compressor catches the peaks when
+ * noticeably quieter than another; the master saturator catches the peaks when
  * several voices sound together.
  */
 

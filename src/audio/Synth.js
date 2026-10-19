@@ -5,6 +5,29 @@ import { getVoice, voiceBanks, voiceFormants } from './voices.js'
 const MIN_GAIN = 0.0001
 const NOISE_SECONDS = 2.5
 const extraStop = 0.12
+
+/**
+ * Where the master saturator starts bending.
+ *
+ * Every note peaks around a third of full scale, so a handful sounding at once
+ * sum past 1.0 and hard-clip at the destination — the scratch heard whenever a
+ * chord plays. The bus divides the sum by this figure and the shaper's curve
+ * puts it back through `tanh`, which is unity gain for quiet playing and a
+ * smooth ceiling for a full chord. Anything past the curve's range is clamped
+ * to the endpoint, so no number of notes can reach full scale.
+ */
+const SATURATE_AT = 16
+
+/** The saturator's transfer curve: `tanh(SATURATE_AT * u)` over u in [-1, 1]. */
+export function softClipCurve(size = 2048) {
+  const curve = new Float32Array(size)
+  for (let i = 0; i < size; i++) {
+    const u = -1 + (2 * i) / (size - 1)
+    curve[i] = Math.tanh(SATURATE_AT * u)
+  }
+  return curve
+}
+
 export function deviceProfile() {
   if (typeof navigator === 'undefined') {
     return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: MAX_SIMULTANEOUS_NOTES, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
@@ -244,22 +267,19 @@ export class Synth {
 
   _masterChain(ctx, destination) {
     const bus = ctx.createGain()
-    // Headroom for a full chord: dozens of notes sum well past 1.0, and the
-    // compressor should only catch the peaks rather than be driven into them.
-    bus.gain.value = 0.7
-    const comp = ctx.createDynamicsCompressor()
-    comp.threshold.value = -12
-    comp.knee.value = 8
-    comp.ratio.value = 3
-    // A slower attack lets note onsets through cleanly; the default clamped
-    // them hard enough to sound like grit on every loud passage.
-    comp.attack.value = 0.01
-    comp.release.value = 0.25
-    bus.connect(comp)
-    comp.connect(destination)
-    // Both nodes have to come out of the graph, not just the bus: a compressor
-    // left connected to the destination still costs the audio thread on every
-    // render quantum, and a pile of them is what eventually distorts.
+    // The sum is divided by the same figure the curve saturates at, so the two
+    // cancel: quiet playing passes through untouched and a full chord bends
+    // smoothly toward the ceiling instead of being squared off into a scratch.
+    bus.gain.value = 1 / SATURATE_AT
+    const shaper = ctx.createWaveShaper()
+    shaper.curve = softClipCurve()
+    // Oversampling keeps the harmonics the curve adds from folding back down.
+    shaper.oversample = '4x'
+    bus.connect(shaper)
+    shaper.connect(destination)
+    // Both nodes have to come out of the graph, not just the bus: a node left
+    // connected to the destination still costs the audio thread on every render
+    // quantum, and a pile of them is what eventually distorts.
     const dispose = () => {
       try {
         bus.disconnect()
@@ -267,7 +287,7 @@ export class Synth {
         /* already disconnected */
       }
       try {
-        comp.disconnect()
+        shaper.disconnect()
       } catch {
         /* already disconnected */
       }
@@ -280,7 +300,7 @@ export class Synth {
    *
    * Played songs build their own chain and disconnect it when they stop, but a
    * key tap must never leave a silence behind: tapping a hymn line can build a
-   * fresh compressor per note in a few seconds, and a real browser's audio
+   * fresh master chain per note in a few seconds, and a real browser's audio
    * thread starts to fall silent when it juggles a growing pile of them. Every
    * tap instead feeds the same chain the next tap uses.
    */

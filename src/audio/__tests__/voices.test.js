@@ -4,6 +4,7 @@ import {
   MAX_SIMULTANEOUS_NOTES,
   newPlaybackBudget,
   noteCost,
+  softClipCurve,
   Synth,
 } from '../Synth.js'
 import {
@@ -564,17 +565,17 @@ describe('synth voice graphs', () => {
 
   it('releases its master chain once a song finishes on its own', () => {
     // Only stopping used to disconnect the bus, so every pass that ended by
-    // itself — and Repeat restarts from onDone — left another compressor on
-    // the output until the audio thread distorted and fell silent.
+    // itself — and Repeat restarts from onDone — left another chain on the
+    // output until the audio thread distorted and fell silent.
     vi.useFakeTimers()
     fake = installFakeAudio()
     const synth = new Synth()
     synth.play([{ notes: [{ midi: 60, beats: 1 }] }], { tempo: 120 })
-    const [comp] = nodesOfKind(fake.live.log, 'compressor')
-    expect(comp).toBeTruthy()
-    expect(comp.disconnected).toBe(false)
+    const [shaper] = nodesOfKind(fake.live.log, 'waveshaper')
+    expect(shaper).toBeTruthy()
+    expect(shaper.disconnected).toBe(false)
     vi.advanceTimersByTime(10000)
-    expect(comp.disconnected).toBe(true)
+    expect(shaper.disconnected).toBe(true)
     vi.useRealTimers()
   })
 
@@ -633,12 +634,31 @@ describe('synth voice graphs', () => {
     synth.playTap(60)
     synth.playTap(64)
     synth.playTap(67)
-    const compressors = nodesOfKind(fake.live.log, 'compressor')
-    expect(compressors).toHaveLength(1)
+    const shapers = nodesOfKind(fake.live.log, 'waveshaper')
+    expect(shapers).toHaveLength(1)
     // One oscillator per piano partial per tap, and one shared bus (tone,
     // partial and envelope gains per note, plus the persistent master bus).
     expect(nodesOfKind(fake.live.log, 'oscillator').length).toBe(12)
     expect(nodesOfKind(fake.live.log, 'gain').length).toBe(19)
+  })
+
+  it('keeps the master curve inside full scale, however many notes sum', () => {
+    // The curve is what stops a chord clipping: `tanh` saturates smoothly, and
+    // the shaper clamps anything past its range to the endpoint, so the
+    // destination can never see a value that would be squared off.
+    const curve = softClipCurve(2049)
+    expect(curve).toBeInstanceOf(Float32Array)
+    expect(curve.length).toBe(2049)
+    for (const y of curve) expect(Math.abs(y)).toBeLessThanOrEqual(1)
+    // Odd symmetry and monotonic, so the curve adds no DC and no folds.
+    for (let i = 0; i < curve.length; i++) {
+      expect(curve[i], `mirror at ${i}`).toBeCloseTo(-curve[curve.length - 1 - i], 10)
+      if (i > 0) expect(curve[i], `rising at ${i}`).toBeGreaterThanOrEqual(curve[i - 1])
+    }
+    // Unity gain at the centre (quiet playing is untouched), and a full chord
+    // lands just under the ceiling rather than clipping.
+    expect(curve[(curve.length - 1) / 2]).toBe(0)
+    expect(Math.abs(curve[curve.length - 1])).toBeGreaterThan(0.99)
   })
 })
 
