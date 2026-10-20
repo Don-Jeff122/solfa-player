@@ -643,9 +643,10 @@ describe('synth voice graphs', () => {
   })
 
   it('keeps the master curve inside full scale, however many notes sum', () => {
-    // The curve is what stops a chord clipping: `tanh` saturates smoothly, and
-    // the shaper clamps anything past its range to the endpoint, so the
-    // destination can never see a value that would be squared off.
+    // The curve is what stops a chord clipping: it is a plain gain until the
+    // sum reaches full scale, then a smooth ceiling. The shaper clamps anything
+    // past its range to the endpoint, so the destination can never see a value
+    // that would be squared off.
     const curve = softClipCurve(2049)
     expect(curve).toBeInstanceOf(Float32Array)
     expect(curve.length).toBe(2049)
@@ -655,9 +656,16 @@ describe('synth voice graphs', () => {
       expect(curve[i], `mirror at ${i}`).toBeCloseTo(-curve[curve.length - 1 - i], 10)
       if (i > 0) expect(curve[i], `rising at ${i}`).toBeGreaterThanOrEqual(curve[i - 1])
     }
-    // Unity gain at the centre (quiet playing is untouched), and a full chord
-    // lands just under the ceiling rather than clipping.
-    expect(curve[(curve.length - 1) / 2]).toBe(0)
+    const centre = (curve.length - 1) / 2
+    expect(curve[centre]).toBe(0)
+    // Exactly linear up to full scale. Four parts of chords sum past 1.0, so a
+    // curve that bent earlier would distort every loud moment — the crackle.
+    // Quarter, half and three-quarter inputs must stay in proportion.
+    expect(curve[centre + 32]).toBeCloseTo(2 * curve[centre + 16], 5)
+    expect(curve[centre + 48]).toBeCloseTo(3 * curve[centre + 16], 5)
+    expect(curve[centre + 64]).toBeCloseTo(4 * curve[centre + 16], 5)
+    // Past the knee it bends toward — but never reaches — full scale.
+    expect(curve[centre + 128]).toBeGreaterThan(curve[centre + 64])
     expect(Math.abs(curve[curve.length - 1])).toBeGreaterThan(0.99)
   })
 })

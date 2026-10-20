@@ -7,23 +7,33 @@ const NOISE_SECONDS = 2.5
 const extraStop = 0.12
 
 /**
- * Where the master saturator starts bending.
+ * The master transfer: unity gain up to a full-scale knee, soft limit above.
  *
- * Every note peaks around a third of full scale, so a handful sounding at once
- * sum past 1.0 and hard-clip at the destination — the scratch heard whenever a
- * chord plays. The bus divides the sum by this figure and the shaper's curve
- * puts it back through `tanh`, which is unity gain for quiet playing and a
- * smooth ceiling for a full chord. Anything past the curve's range is clamped
- * to the endpoint, so no number of notes can reach full scale.
+ * A note peaks around a third of full scale, so four parts of chords sum past
+ * 1.0. Any curve that bends before that — a compressor, or a `tanh` that starts
+ * squashing at a third — distorts every loud moment and is heard as a crackle
+ * over the music. So this curve is exactly linear up to LIMIT_KNEE and only
+ * bends the rare samples above it, which keeps ordinary playing untouched
+ * while still stopping the destination from ever seeing more than full scale.
+ *
+ * The bus divides the sum by MASTER_SCALE and the curve multiplies it back, so
+ * the two cancel and `MASTER_GAIN` is the only overall attenuation.
  */
-const SATURATE_AT = 16
+const MASTER_SCALE = 16
+const MASTER_GAIN = 0.7
+const LIMIT_KNEE = 1
 
-/** The saturator's transfer curve: `tanh(SATURATE_AT * u)` over u in [-1, 1]. */
+/** The master transfer curve over u in [-1, 1]; input is `u * MASTER_SCALE`. */
 export function softClipCurve(size = 2048) {
   const curve = new Float32Array(size)
+  const ceiling = 1 - MASTER_GAIN * LIMIT_KNEE
   for (let i = 0; i < size; i++) {
     const u = -1 + (2 * i) / (size - 1)
-    curve[i] = Math.tanh(SATURATE_AT * u)
+    const x = Math.abs(u * MASTER_SCALE)
+    const bend = (MASTER_GAIN * (x - LIMIT_KNEE)) / ceiling
+    const y =
+      x <= LIMIT_KNEE ? MASTER_GAIN * x : MASTER_GAIN * LIMIT_KNEE + ceiling * Math.tanh(bend)
+    curve[i] = Math.sign(u) * y
   }
   return curve
 }
@@ -267,10 +277,10 @@ export class Synth {
 
   _masterChain(ctx, destination) {
     const bus = ctx.createGain()
-    // The sum is divided by the same figure the curve saturates at, so the two
-    // cancel: quiet playing passes through untouched and a full chord bends
-    // smoothly toward the ceiling instead of being squared off into a scratch.
-    bus.gain.value = 1 / SATURATE_AT
+    // The sum is divided by the same figure the curve is scaled by, so the two
+    // cancel: playing below the knee passes through as a plain gain, and only
+    // the peaks of a very full chord are bent toward the ceiling.
+    bus.gain.value = 1 / MASTER_SCALE
     const shaper = ctx.createWaveShaper()
     shaper.curve = softClipCurve()
     // Oversampling keeps the harmonics the curve adds from folding back down.
