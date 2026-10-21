@@ -28,6 +28,8 @@ const nextFrame =
     : (fn) => setTimeout(fn, 16)
 const cancelFrame =
   typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout
+const debugAudio =
+  typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
 
 const DEFAULT_TEXT = `Key: C
 Do Do So So Re Re Do- Mi Mi Fa Fa So So Mi-
@@ -92,6 +94,7 @@ export default function App() {
   const [wavUrl, setWavUrl] = useState(null)
   const [wavName, setWavName] = useState('solfa.wav')
   const [error, setError] = useState(null)
+  const [audioStats, setAudioStats] = useState(null)
   const [audioError, setAudioError] = useState(null)
   const [sheets, setSheets] = useState(() => {
     const existing = loadSheets()
@@ -232,8 +235,18 @@ export default function App() {
       uiFrameRef.current = 0
       setActiveMidi(new Set(activeMidiRef.current))
       setNoteIndexes(noteIndexesRef.current.slice())
+      if (debugAudio && synth.lastBudget) {
+        const b = synth.lastBudget
+        setAudioStats({
+          scheduled: b.scheduled,
+          droppedLate: b.droppedLate,
+          skipped: b.skipped,
+          trimmed: b.trimmed,
+          nodes: b.liveNodes,
+        })
+      }
     })
-  }, [])
+  }, [synth])
 
   const stopPlayback = useCallback(() => {
     if (handleRef.current) handleRef.current.stop()
@@ -718,6 +731,13 @@ export default function App() {
             {!error && !rendering && wavUrl && (
               <span className="status-ok">
                 Recording ready. Use “Download” to save the WAV.
+              </span>
+            )}
+            {debugAudio && audioStats && (
+              <span className="status-busy">
+                audio: {audioStats.scheduled} scheduled · {audioStats.droppedLate} dropped late ·{' '}
+                {audioStats.skipped} skipped · {audioStats.trimmed} trimmed · {audioStats.nodes}{' '}
+                live nodes
               </span>
             )}
           </div>

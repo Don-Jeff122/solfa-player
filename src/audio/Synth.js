@@ -6,7 +6,16 @@ const MIN_GAIN = 0.0001
 const NOISE_SECONDS = 2.5
 const extraStop = 0.12
 const LATE_NOTE_LEAD = 0.02
-const LATE_NOTE_DROP = 0.35
+// A busy phone can delay the scheduling timer by a second or more. Notes only
+// a little behind still belong in the music, so keep them and play them at
+// their attack; only a genuinely stale note — one the player would hear as a
+// late echo — is dropped.
+const LATE_NOTE_DROP = 1.5
+// The first slice is longer than the steady-state window: Play also paints the
+// page and starts the audio context, and the opening notes must not be lost to
+// that work.
+const FIRST_WINDOW = 3
+const ADVANCE_TICK_MS = 500
 
 /**
  * The master transfer: unity gain up to a full-scale knee, soft limit above.
@@ -48,7 +57,7 @@ export function deviceProfile() {
   const cores = navigator.hardwareConcurrency || 8
   const lowPower = coarse && cores <= 6
   if (lowPower) {
-    return { maxNodes: 420, maxNotes: 36, lookahead: 1.2, latencyHint: 'playback', lowPower: true }
+    return { maxNodes: 420, maxNotes: 36, lookahead: 2, latencyHint: 'playback', lowPower: true }
   }
   return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: 48, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
 }
@@ -528,18 +537,29 @@ export class Synth {
     env.connect(destination)
 
     const watcher = sources[0]
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      try {
+        env.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+      try {
+        tone.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
     if (watcher) {
       watcher.onended = () => {
-        try {
-          env.disconnect()
-        } catch {
-          /* already disconnected */
-        }
-        try {
-          tone.disconnect()
-        } catch {
-          /* already disconnected */
-        }
+        // Some browsers can report the end before the scheduled stop. Cutting
+        // the note there would truncate its release, so wait out the remainder
+        // instead. A late disconnect only frees the graph a little later.
+        const left = (stopAt - ctx.currentTime) * 1000
+        if (left > 30) setTimeout(release, left)
+        else release()
       }
     }
     return stopAt
@@ -749,11 +769,14 @@ export class Synth {
     // each note is scheduled exactly once.
     const window = Math.max(lookahead ?? profile.lookahead, LOOKAHEAD_MIN)
     let cursor = t0
+    let first = true
     let advanceTimer = null
     let doneTimer = null
 
     const scheduleSlice = () => {
-      const to = Math.min(cursor + window, t0 + longestBeats * beat)
+      const span = first ? Math.max(window, FIRST_WINDOW) : window
+      first = false
+      const to = Math.min(cursor + span, t0 + longestBeats * beat)
       this._scheduleAll(ctx, bus, seqs, t0, beat, voice, sustain, {
         from: cursor,
         to,
@@ -846,16 +869,19 @@ export class Synth {
           if (stopped) return
           let done = false
           let slices = 0
+          // If a timer was delayed, fill the gap a window at a time. More than
+          // three windows at once would build a burst of nodes on the very
+          // thread that was already busy, so finish catching up on later ticks.
           while (!done && cursor - ctx.currentTime < window && slices < 3) {
             done = scheduleSlice()
             slices++
           }
           if (!done) {
             const late = cursor - ctx.currentTime < window * 0.5
-            advanceTimer = setTimeout(tick, late ? 50 : Math.max(250, (window * 1000) / 2))
+            advanceTimer = setTimeout(tick, late ? 50 : ADVANCE_TICK_MS)
           }
         }
-        advanceTimer = setTimeout(tick, Math.max(250, (window * 1000) / 2))
+        advanceTimer = setTimeout(tick, ADVANCE_TICK_MS)
       }
     }
 

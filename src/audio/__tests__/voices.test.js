@@ -236,6 +236,8 @@ describe('synth voice graphs', () => {
     const ctx = createFakeContext()
     const synth = new Synth()
     synth._scheduleNote(ctx, ctx.createGain(), midi, t0, dur, 0.95, voiceId, sustain)
+    // Keep the clock with the log so the teardown tests can reach the stop time.
+    ctx.log.ctx = ctx
     return ctx.log
   }
 
@@ -384,6 +386,7 @@ describe('synth voice graphs', () => {
       const env = gains.at(-1)
       const osc = nodesOfKind(log, 'oscillator')[0]
       expect(env.disconnected, id).toBe(false)
+      log.ctx.currentTime = osc.stopTime
       osc.onended()
       expect(env.disconnected, `${id} kept its envelope connected`).toBe(true)
       expect(tone.disconnected, `${id} kept its tone bus connected`).toBe(true)
@@ -395,9 +398,35 @@ describe('synth voice graphs', () => {
     const synth = new Synth()
     synth.playTap(60, { voice: 'piano' })
     const env = nodesOfKind(fake.live.log, 'gain').at(-1)
+    const osc = nodesOfKind(fake.live.log, 'oscillator')[0]
     expect(env.disconnected).toBe(false)
-    nodesOfKind(fake.live.log, 'oscillator')[0].onended()
+    fake.live.currentTime = osc.stopTime
+    osc.onended()
     expect(env.disconnected).toBe(true)
+  })
+
+  it('never cuts a note short when onended arrives early', () => {
+    vi.useFakeTimers()
+    const ctx = createFakeContext()
+    const synth = new Synth()
+    synth._scheduleNote(ctx, ctx.destination, 60, 1, 1, 0.95, 'piano')
+    const gains = nodesOfKind(ctx.log, 'gain')
+    const tone = gains[0]
+    const env = gains.at(-1)
+    const osc = nodesOfKind(ctx.log, 'oscillator')[0]
+
+    // A quirky browser reports the end while the note is still releasing.
+    ctx.currentTime = 0.5
+    osc.onended()
+    expect(env.disconnected).toBe(false)
+    expect(tone.disconnected).toBe(false)
+
+    // Once the clock really reaches the stop, the graph is released.
+    ctx.currentTime = osc.stopTime
+    osc.onended()
+    expect(env.disconnected).toBe(true)
+    expect(tone.disconnected).toBe(true)
+    vi.useRealTimers()
   })
 
   it('adds the chosen ring-out on top of the instrument release', () => {
@@ -800,9 +829,28 @@ describe('lookahead scheduling', () => {
     expect(scheduled(ctx.log, 'frequency')[0].time).toBeCloseTo(0.32, 6)
   })
 
+  it('keeps a note that a delayed timer puts only a little behind', () => {
+    const ctx = createFakeContext()
+    ctx.currentTime = 1.4
+    const synth = new Synth()
+    const result = synth._scheduleAll(
+      ctx,
+      ctx.createGain(),
+      [{ notes: [{ midi: 60, beats: 1 }] }],
+      0.08,
+      0.5,
+      'piano',
+      0,
+      { realtime: true, from: 0.08, to: 0.5 },
+    )
+    expect(result.droppedLate).toBe(0)
+    expect(result.budget.scheduled).toBe(1)
+    expect(scheduled(ctx.log, 'frequency')[0].time).toBeCloseTo(1.42, 6)
+  })
+
   it('drops a note that is already too far behind to play in time', () => {
     const ctx = createFakeContext()
-    ctx.currentTime = 1
+    ctx.currentTime = 2
     const synth = new Synth()
     const result = synth._scheduleAll(
       ctx,
