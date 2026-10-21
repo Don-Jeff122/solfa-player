@@ -376,6 +376,30 @@ describe('synth voice graphs', () => {
     }
   })
 
+  it('releases the note graph once its sources end', () => {
+    for (const id of IDS) {
+      const log = schedule(id)
+      const gains = nodesOfKind(log, 'gain')
+      const tone = gains[1]
+      const env = gains.at(-1)
+      const osc = nodesOfKind(log, 'oscillator')[0]
+      expect(env.disconnected, id).toBe(false)
+      osc.onended()
+      expect(env.disconnected, `${id} kept its envelope connected`).toBe(true)
+      expect(tone.disconnected, `${id} kept its tone bus connected`).toBe(true)
+    }
+  })
+
+  it('releases a tapped note once it ends', () => {
+    fake = installFakeAudio()
+    const synth = new Synth()
+    synth.playTap(60, { voice: 'piano' })
+    const env = nodesOfKind(fake.live.log, 'gain').at(-1)
+    expect(env.disconnected).toBe(false)
+    nodesOfKind(fake.live.log, 'oscillator')[0].onended()
+    expect(env.disconnected).toBe(true)
+  })
+
   it('adds the chosen ring-out on top of the instrument release', () => {
     const releaseEnd = (log) =>
       Math.max(
@@ -565,7 +589,7 @@ describe('synth voice graphs', () => {
 
   it('releases its master chain once a song finishes on its own', () => {
     // Only stopping used to disconnect the bus, so every pass that ended by
-    // itself — and Repeat restarts from onDone — left another chain on the
+    // itself â€” and Repeat restarts from onDone â€” left another chain on the
     // output until the audio thread distorted and fell silent.
     vi.useFakeTimers()
     fake = installFakeAudio()
@@ -659,12 +683,12 @@ describe('synth voice graphs', () => {
     const centre = (curve.length - 1) / 2
     expect(curve[centre]).toBe(0)
     // Exactly linear up to full scale. Four parts of chords sum past 1.0, so a
-    // curve that bent earlier would distort every loud moment — the crackle.
+    // curve that bent earlier would distort every loud moment â€” the crackle.
     // Quarter, half and three-quarter inputs must stay in proportion.
     expect(curve[centre + 32]).toBeCloseTo(2 * curve[centre + 16], 5)
     expect(curve[centre + 48]).toBeCloseTo(3 * curve[centre + 16], 5)
     expect(curve[centre + 64]).toBeCloseTo(4 * curve[centre + 16], 5)
-    // Past the knee it bends toward — but never reaches — full scale.
+    // Past the knee it bends toward â€” but never reaches â€” full scale.
     expect(curve[centre + 128]).toBeGreaterThan(curve[centre + 64])
     expect(Math.abs(curve[curve.length - 1])).toBeGreaterThan(0.99)
   })
@@ -696,13 +720,17 @@ describe('lookahead scheduling', () => {
     synth.play(fourPartSheet(), { tempo: 90, voice: 'hymn', sustain: 1.5 })
 
     // Scheduling the whole sheet up front used to hand the browser every node
-    // in one pass — about ten thousand for this score — before a sound played.
+    // in one pass â€” about ten thousand for this score â€” before a sound played.
     const firstSlice = nodeCount(fake.live.log)
     expect(firstSlice).toBeGreaterThan(0)
     expect(firstSlice).toBeLessThan(250)
 
-    // And every note must still arrive, over the length of the song.
-    vi.advanceTimersByTime(120000)
+    // And every note must still arrive, over the length of the song. The fake
+    // context has no clock of its own, so walk it in step with the timers.
+    for (let t = 0; t < 120000; t += 500) {
+      fake.live.currentTime += 0.5
+      vi.advanceTimersByTime(500)
+    }
     expect(synth.lastBudget.scheduled).toBe(56 * 4)
     expect(synth.lastBudget.skipped).toBe(0)
     expect(synth.lastBudget.trimmed).toBe(0)
@@ -732,6 +760,63 @@ describe('lookahead scheduling', () => {
     expect(inWindows).toBe(20)
     expect(budget.scheduled).toBe(20)
     expect(budget.skipped).toBe(0)
+  })
+
+  it('frees budget nodes at the real note stop time, not the written end', () => {
+    const ctx = createFakeContext()
+    const synth = new Synth()
+    const budget = newPlaybackBudget()
+    const result = synth._scheduleAll(
+      ctx,
+      ctx.createGain(),
+      [{ notes: [{ midi: 60, beats: 0.05 }] }],
+      0.08,
+      0.5,
+      'hymn',
+      2,
+      { budget },
+    )
+    expect(result.budget.scheduled).toBe(1)
+    const stop = nodesOfKind(ctx.log, 'oscillator')[0].stopTime
+    expect(result.budget.live[0].end).toBeCloseTo(stop, 9)
+  })
+
+  it('starts a slightly late note at its attack instead of mid-envelope', () => {
+    const ctx = createFakeContext()
+    ctx.currentTime = 0.3
+    const synth = new Synth()
+    const result = synth._scheduleAll(
+      ctx,
+      ctx.createGain(),
+      [{ notes: [{ midi: 60, beats: 1 }] }],
+      0.08,
+      0.5,
+      'piano',
+      0,
+      { realtime: true, from: 0.08, to: 0.5 },
+    )
+    expect(result.droppedLate).toBe(0)
+    expect(result.budget.scheduled).toBe(1)
+    expect(scheduled(ctx.log, 'frequency')[0].time).toBeCloseTo(0.32, 6)
+  })
+
+  it('drops a note that is already too far behind to play in time', () => {
+    const ctx = createFakeContext()
+    ctx.currentTime = 1
+    const synth = new Synth()
+    const result = synth._scheduleAll(
+      ctx,
+      ctx.createGain(),
+      [{ notes: [{ midi: 60, beats: 1 }] }],
+      0.08,
+      0.5,
+      'piano',
+      0,
+      { realtime: true, from: 0.08, to: 0.5 },
+    )
+    expect(result.droppedLate).toBe(1)
+    expect(result.budget.scheduled).toBe(0)
+    expect(nodesOfKind(ctx.log, 'oscillator').length).toBe(0)
   })
 
   it('stops scheduling once the playback is stopped', () => {

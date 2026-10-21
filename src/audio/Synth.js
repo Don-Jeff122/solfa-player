@@ -5,6 +5,8 @@ import { getVoice, voiceBanks, voiceFormants } from './voices.js'
 const MIN_GAIN = 0.0001
 const NOISE_SECONDS = 2.5
 const extraStop = 0.12
+const LATE_NOTE_LEAD = 0.02
+const LATE_NOTE_DROP = 0.35
 
 /**
  * The master transfer: unity gain up to a full-scale knee, soft limit above.
@@ -194,6 +196,7 @@ export function newPlaybackBudget() {
     scheduled: 0,
     skipped: 0,
     trimmed: 0,
+    droppedLate: 0,
     error: null,
   }
 }
@@ -275,7 +278,7 @@ export class Synth {
     return wave
   }
 
-  _masterChain(ctx, destination) {
+  _masterChain(ctx, destination, oversample = '4x') {
     const bus = ctx.createGain()
     // The sum is divided by the same figure the curve is scaled by, so the two
     // cancel: playing below the knee passes through as a plain gain, and only
@@ -284,7 +287,7 @@ export class Synth {
     const shaper = ctx.createWaveShaper()
     shaper.curve = softClipCurve()
     // Oversampling keeps the harmonics the curve adds from folding back down.
-    shaper.oversample = '4x'
+    shaper.oversample = oversample
     bus.connect(shaper)
     shaper.connect(destination)
     // Both nodes have to come out of the graph, not just the bus: a node left
@@ -318,7 +321,8 @@ export class Synth {
     const dead = ctx && (ctx.state === 'closed' || ctx.state === 'interrupted')
     if (!this._out || this._outCtx !== ctx || dead) {
       this._outCtx = ctx
-      this._out = this._masterChain(ctx, ctx.destination).input
+      const profile = deviceProfile()
+      this._out = this._masterChain(ctx, ctx.destination, profile.lowPower ? '2x' : '4x').input
     }
     return this._out
   }
@@ -336,6 +340,13 @@ export class Synth {
     g.gain.exponentialRampToValueAtTime(MIN_GAIN, time + 0.045)
     osc.connect(g)
     g.connect(destination)
+    osc.onended = () => {
+      try {
+        g.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
     osc.start(time)
     osc.stop(time + 0.08)
   }
@@ -375,6 +386,7 @@ export class Synth {
     tone.gain.value = 1
     const banks = voiceBanks(voice)
     const fundamentals = []
+    const sources = []
 
     banks.forEach((spec) => {
       const isWave = spec.kind === 'wave'
@@ -397,6 +409,7 @@ export class Synth {
         g.gain.value = (isWave ? 1 : spec.gain) * gainScale
         osc.connect(g)
         g.connect(tone)
+        sources.push(osc)
         osc.start(t0)
         osc.stop(stopAt)
         if (isFundamental) fundamentals.push(osc)
@@ -513,6 +526,23 @@ export class Synth {
     env.gain.exponentialRampToValueAtTime(MIN_GAIN, releaseAt)
     chain.connect(env)
     env.connect(destination)
+
+    const watcher = sources[0]
+    if (watcher) {
+      watcher.onended = () => {
+        try {
+          env.disconnect()
+        } catch {
+          /* already disconnected */
+        }
+        try {
+          tone.disconnect()
+        } catch {
+          /* already disconnected */
+        }
+      }
+    }
+    return stopAt
   }
 
   /**
@@ -533,7 +563,8 @@ export class Synth {
    * is still ringing when the fourth begins, so it still holds its nodes.
    */
   _scheduleAll(ctx, destination, seqs, t0, beat, voiceId, ring = 0, opts = {}) {
-    const { from = -Infinity, to = Infinity } = opts
+    const { from = -Infinity, to = Infinity, realtime = false } = opts
+    const now = realtime ? ctx.currentTime : -Infinity
     const budget = opts.budget || newPlaybackBudget()
 
     if (opts.metronome) {
@@ -603,6 +634,11 @@ export class Synth {
     // nodes back, so a long piece plays at full detail throughout.
     for (const ev of events) {
       if (ev.midi == null) continue
+      if (realtime && ev.start < now - LATE_NOTE_DROP) {
+        budget.droppedLate++
+        continue
+      }
+      const start = realtime && ev.start < now + LATE_NOTE_LEAD ? now + LATE_NOTE_LEAD : ev.start
       const finished = budget.live.filter((item) => item.end <= ev.start)
       for (const item of finished) {
         budget.liveNodes -= item.cost
@@ -634,12 +670,13 @@ export class Synth {
       }
       if (chosen !== tiers[0]) budget.trimmed++
 
+      let stopAt
       try {
-        this._scheduleNote(
+        stopAt = this._scheduleNote(
           ctx,
           destination,
           ev.midi,
-          ev.start,
+          start,
           ev.dur,
           0.95,
           voiceId,
@@ -660,7 +697,7 @@ export class Synth {
       budget.built += chosen.cost
       budget.scheduled++
       budget.live.push({
-        end: ev.start + ev.dur + preset.release + ring,
+        end: stopAt ?? start + ev.dur + preset.release + ring,
         cost: chosen.cost,
       })
     }
@@ -669,6 +706,7 @@ export class Synth {
       notes: events.length,
       skipped: budget.skipped,
       trimmed: budget.trimmed,
+      droppedLate: budget.droppedLate,
       nodes: budget.liveNodes,
       built: budget.built - builtBefore,
       budget,
@@ -690,9 +728,9 @@ export class Synth {
     } = {},
   ) {
     const ctx = this._ensureCtx()
-    const chain = this._masterChain(ctx, ctx.destination)
-    const bus = chain.input
     const profile = deviceProfile()
+    const chain = this._masterChain(ctx, ctx.destination, profile.lowPower ? '2x' : '4x')
+    const bus = chain.input
     const beat = 60 / tempo
     const timers = []
     const budget = newPlaybackBudget()
@@ -721,6 +759,7 @@ export class Synth {
         to,
         budget,
         metronome,
+        realtime: true,
         maxNodes: profile.maxNodes,
         maxNotes: profile.maxNotes,
       })
@@ -735,12 +774,12 @@ export class Synth {
     }
 
     const flush = (budgetNodes = 500) => {
-      // When the page is backgrounded (common on mobile), setInterval is heavily
+      // When the page is backgrounded (common on mobile), timers are heavily
       // throttled and the last slices can be delayed until much later — long
       // enough for the browser to stop audio. Flush the rest now, a chunk at a
       // time: handing the thread every remaining node in one pass stalls it.
       if (advanceTimer) {
-        clearInterval(advanceTimer)
+        clearTimeout(advanceTimer)
         advanceTimer = null
       }
       const builtBefore = budget.built
@@ -776,7 +815,7 @@ export class Synth {
       if (stopped) return
       stopped = true
       if (advanceTimer) {
-        clearInterval(advanceTimer)
+        clearTimeout(advanceTimer)
         advanceTimer = null
       }
       if (visHandler) {
@@ -802,12 +841,21 @@ export class Synth {
     } else {
       const allScheduled = scheduleSlice()
       if (!allScheduled) {
-        advanceTimer = setInterval(() => {
-          if (scheduleSlice()) {
-            clearInterval(advanceTimer)
-            advanceTimer = null
+        const tick = () => {
+          advanceTimer = null
+          if (stopped) return
+          let done = false
+          let slices = 0
+          while (!done && cursor - ctx.currentTime < window && slices < 3) {
+            done = scheduleSlice()
+            slices++
           }
-        }, Math.max(250, (window * 1000) / 2))
+          if (!done) {
+            const late = cursor - ctx.currentTime < window * 0.5
+            advanceTimer = setTimeout(tick, late ? 50 : Math.max(250, (window * 1000) / 2))
+          }
+        }
+        advanceTimer = setTimeout(tick, Math.max(250, (window * 1000) / 2))
       }
     }
 
@@ -827,7 +875,7 @@ export class Synth {
     const doneMs = (t0 - ctx.currentTime) * 1000 + longestBeats * beat * 1000
     doneTimer = setTimeout(() => {
       if (advanceTimer) {
-        clearInterval(advanceTimer)
+        clearTimeout(advanceTimer)
         advanceTimer = null
       }
       if (onDone) onDone()

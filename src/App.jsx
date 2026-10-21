@@ -22,6 +22,13 @@ import {
 } from './lib/notes.js'
 import { deleteSheet, describeSheet, loadSheets, saveSheet } from './lib/sheetStore.js'
 
+const nextFrame =
+  typeof requestAnimationFrame === 'function'
+    ? requestAnimationFrame
+    : (fn) => setTimeout(fn, 16)
+const cancelFrame =
+  typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout
+
 const DEFAULT_TEXT = `Key: C
 Do Do So So Re Re Do- Mi Mi Fa Fa So So Mi-
 La La So So Fa Fa Re- Do Do So So Re Re Do-`
@@ -108,6 +115,9 @@ export default function App() {
   const handleRef = useRef(null)
   const tapTimerRef = useRef(null)
   const wavUrlRef = useRef(null)
+  const activeMidiRef = useRef(new Set())
+  const noteIndexesRef = useRef([])
+  const uiFrameRef = useRef(0)
   // Read from the synth's done callback, which is set up once per pass.
   const repeatRef = useRef(false)
   const startRef = useRef(null)
@@ -201,13 +211,36 @@ export default function App() {
     [sequences]
   )
 
+  const cancelUiFrame = useCallback(() => {
+    if (uiFrameRef.current) {
+      cancelFrame(uiFrameRef.current)
+      uiFrameRef.current = 0
+    }
+  }, [])
+
+  const resetUi = useCallback(() => {
+    cancelUiFrame()
+    activeMidiRef.current = new Set()
+    noteIndexesRef.current = []
+    setActiveMidi(new Set())
+    setNoteIndexes([])
+  }, [cancelUiFrame])
+
+  const queueUi = useCallback(() => {
+    if (uiFrameRef.current) return
+    uiFrameRef.current = nextFrame(() => {
+      uiFrameRef.current = 0
+      setActiveMidi(new Set(activeMidiRef.current))
+      setNoteIndexes(noteIndexesRef.current.slice())
+    })
+  }, [])
+
   const stopPlayback = useCallback(() => {
     if (handleRef.current) handleRef.current.stop()
     handleRef.current = null
     setIsPlaying(false)
-    setActiveMidi(new Set())
-    setNoteIndexes([])
-  }, [])
+    resetUi()
+  }, [resetUi])
 
   // Keep the dropdowns in sync with the sheet (so the UI reflects parsed data)
   // and stop playback when the underlying sequence changes.
@@ -223,16 +256,17 @@ export default function App() {
   useEffect(() => {
     return () => {
       if (handleRef.current) handleRef.current.stop()
+      cancelUiFrame()
       clearTimeout(tapTimerRef.current)
       if (wavUrlRef.current) URL.revokeObjectURL(wavUrlRef.current)
     }
-  }, [synth])
+  }, [synth, cancelUiFrame])
 
   const startPlayback = useCallback(() => {
     if (!sequences || !sequences.length || !totalBeats) return
     if (handleRef.current) handleRef.current.stop()
     handleRef.current = null
-    setNoteIndexes([])
+    resetUi()
     setAudioError(null)
     try {
       const ctx = synth._ensureCtx?.() || synth.ctx
@@ -247,30 +281,20 @@ export default function App() {
       // notes go on highlighting over a speaker that never makes a sound.
       onError: (err) => setAudioError(err && err.message ? err.message : String(err)),
       onNoteStart: (n) => {
-        setNoteIndexes((prev) => {
-          const next = prev.slice()
-          next[n.seqIndex] = n.index
-          return next
-        })
-        if (n.midi == null) return
-        setActiveMidi((prev) => {
-          const next = new Set(prev)
-          next.add(n.midi)
-          return next
-        })
+        if (noteIndexesRef.current[n.seqIndex] !== n.index) {
+          noteIndexesRef.current[n.seqIndex] = n.index
+        }
+        if (n.midi != null) activeMidiRef.current.add(n.midi)
+        queueUi()
       },
       onNoteEnd: (n) => {
         if (n.midi == null) return
-        setActiveMidi((prev) => {
-          const next = new Set(prev)
-          next.delete(n.midi)
-          return next
-        })
+        activeMidiRef.current.delete(n.midi)
+        queueUi()
       },
       onDone: () => {
         handleRef.current = null
-        setActiveMidi(new Set())
-        setNoteIndexes([])
+        resetUi()
         // Repeat restarts from here; stopping clears the synth's own done timer,
         // so this cannot fire once the player has been stopped or changed.
         if (repeatRef.current) {
@@ -281,7 +305,7 @@ export default function App() {
       },
     })
     setIsPlaying(true)
-  }, [sequences, totalBeats, tempo, sound, ring, synth, metronome])
+  }, [sequences, totalBeats, tempo, sound, ring, synth, metronome, resetUi, queueUi])
 
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
