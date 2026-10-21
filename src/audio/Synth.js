@@ -1,4 +1,5 @@
 import { midiToFreq, sequenceBeats } from '../lib/notes.js'
+import { RENDER_LEAD_SECONDS } from '../lib/timeline.js'
 import { getVoice, voiceBanks, voiceFormants } from './voices.js'
 
 // Exponential ramps cannot reach zero, so every envelope bottoms out here.
@@ -756,7 +757,7 @@ export class Synth {
     const budget = newPlaybackBudget()
     let stopped = false
 
-    const t0 = ctx.currentTime + 0.08
+    const t0 = ctx.currentTime + RENDER_LEAD_SECONDS
     let longestBeats = 0
     seqs.forEach((seq) => {
       longestBeats = Math.max(longestBeats, sequenceBeats(seq))
@@ -929,12 +930,12 @@ export class Synth {
     const beat = 60 / tempo
     let longestBeats = 0
     for (const seq of seqs) longestBeats = Math.max(longestBeats, sequenceBeats(seq))
-    const duration = 0.08 + longestBeats * beat + tail
+    const duration = RENDER_LEAD_SECONDS + longestBeats * beat + tail
     const sampleRate = 44100
     const ctx = new OfflineAudioContext(1, Math.ceil(duration * sampleRate), sampleRate)
     const bus = this._masterChain(ctx, ctx.destination).input
 
-    this._scheduleAll(ctx, bus, seqs, 0.08, beat, voice, sustain, { metronome })
+    this._scheduleAll(ctx, bus, seqs, RENDER_LEAD_SECONDS, beat, voice, sustain, { metronome })
 
     return ctx.startRendering()
   }

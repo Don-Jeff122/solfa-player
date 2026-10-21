@@ -1,4 +1,5 @@
 import { MAJOR_KEYS, VOICE_OCTAVE_MAX, VOICE_OCTAVE_MIN } from '../lib/notes.js'
+import { formatClock } from '../lib/timeline.js'
 import { VOICE_LIST, SUSTAIN_OPTIONS } from '../audio/voices.js'
 
 const TEMPO_MIN = 40
@@ -12,6 +13,14 @@ export default function Controls({
   isPlaying,
   onPlay,
   onStop,
+  background,
+  onBackground,
+  backgroundPreparing,
+  isPaused,
+  onPause,
+  progress,
+  duration,
+  onSeek,
   tempo,
   onTempo,
   keyFromSheet,
@@ -47,15 +56,41 @@ export default function Controls({
       <div className="controls-row">
         <div className="transport">
           {isPlaying ? (
-            <button type="button" className="btn btn-stop" onClick={onStop}>
-              <span className="btn-icon stop" />
-              Stop
-            </button>
+            <>
+              {background && (
+                <button
+                  type="button"
+                  className="btn btn-pause"
+                  onClick={onPause}
+                  title="Pause without losing your place"
+                >
+                  <span className="btn-icon pause" />
+                  Pause
+                </button>
+              )}
+              <button type="button" className="btn btn-stop" onClick={onStop}>
+                <span className="btn-icon stop" />
+                Stop
+              </button>
+            </>
           ) : (
-            <button type="button" className="btn btn-primary" onClick={onPlay} disabled={!canPlay}>
-              <span className="btn-icon play" />
-              Play
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={onPlay}
+                disabled={!canPlay}
+              >
+                <span className="btn-icon play" />
+                {backgroundPreparing ? 'Preparing…' : isPaused ? 'Resume' : 'Play'}
+              </button>
+              {isPaused && (
+                <button type="button" className="btn btn-stop" onClick={onStop}>
+                  <span className="btn-icon stop" />
+                  Stop
+                </button>
+              )}
+            </>
           )}
           <button
             type="button"
@@ -70,6 +105,20 @@ export default function Controls({
           >
             <span className="btn-icon repeat" />
             Repeat
+          </button>
+          <button
+            type="button"
+            className={`btn btn-background${background ? ' active' : ''}`}
+            onClick={() => onBackground(!background)}
+            aria-pressed={background}
+            title={
+              background
+                ? 'On: keeps playing in another tab/app or with the screen locked'
+                : 'Off: live playback only. Turn on to keep playing in the background'
+            }
+          >
+            <span className="btn-icon background" />
+            Background
           </button>
           <button
             type="button"
@@ -126,6 +175,24 @@ export default function Controls({
           />
         </div>
       </div>
+      {background && duration > 0 && (isPlaying || isPaused) && (
+        <div className="progress-row">
+          <span className="time">{formatClock(progress)}</span>
+          <input
+            type="range"
+            min="0"
+            max={duration}
+            step="0.1"
+            value={Math.min(progress, duration)}
+            style={{
+              '--fill': `${(Math.min(progress, duration) / duration) * 100}%`,
+            }}
+            onChange={(e) => onSeek(Number(e.target.value))}
+            aria-label="Playback position"
+          />
+          <span className="time">{formatClock(duration)}</span>
+        </div>
+      )}
       <div className="controls-row selects">
         <label className="select-field">
           <span>Key</span>

@@ -21,6 +21,7 @@ import {
   tonicMidiForKey,
 } from './lib/notes.js'
 import { deleteSheet, describeSheet, loadSheets, saveSheet } from './lib/sheetStore.js'
+import { buildTimeline, timelineAt } from './lib/timeline.js'
 
 const nextFrame =
   typeof requestAnimationFrame === 'function'
@@ -30,6 +31,60 @@ const cancelFrame =
   typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout
 const debugAudio =
   typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
+
+const BACKGROUND_PREF = 'solfa-piano.background.v1'
+
+function loadBackgroundPref() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(BACKGROUND_PREF) === '1'
+  } catch {
+    return false
+  }
+}
+
+function saveBackgroundPref(on) {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(BACKGROUND_PREF, on ? '1' : '0')
+    }
+  } catch {
+    /* storage may be blocked */
+  }
+}
+
+/**
+ * Safari uses this to treat the page as media playback rather than a short
+ * sound effect, which is what lets audio continue past the lock screen.
+ */
+function setAudioSessionType(type) {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.audioSession) {
+      navigator.audioSession.type = type
+    }
+  } catch {
+    /* not supported */
+  }
+}
+
+function mediaArtwork() {
+  if (typeof document === 'undefined') return []
+  try {
+    return [
+      {
+        src: new URL('icons/pwa-192x192.png', document.baseURI).href,
+        sizes: '192x192',
+        type: 'image/png',
+      },
+      {
+        src: new URL('icons/pwa-512x512.png', document.baseURI).href,
+        sizes: '512x512',
+        type: 'image/png',
+      },
+    ]
+  } catch {
+    return []
+  }
+}
 
 const DEFAULT_TEXT = `Key: C
 Do Do So So Re Re Do- Mi Mi Fa Fa So So Mi-
@@ -112,6 +167,12 @@ export default function App() {
   const [sustain, setSustain] = useState(DEFAULT_SUSTAIN_ID)
   const [repeat, setRepeat] = useState(false)
   const [metronome, setMetronome] = useState(false)
+  const [background, setBackground] = useState(loadBackgroundPref)
+  const [bgStatus, setBgStatus] = useState(background ? 'stale' : 'off')
+  const [bgDuration, setBgDuration] = useState(0)
+  const [position, setPosition] = useState(0)
+  const [isPaused, setIsPaused] = useState(false)
+  const [textFocused, setTextFocused] = useState(false)
   const ring = sustainSeconds(sustain)
 
   const [synth] = useState(() => new Synth())
@@ -121,12 +182,26 @@ export default function App() {
   const activeMidiRef = useRef(new Set())
   const noteIndexesRef = useRef([])
   const uiFrameRef = useRef(0)
+  const audioRef = useRef(null)
+  // The prepared track and the job that produced it. A render is only adopted
+  // if its job is still the newest one and its settings still match.
+  const bgCacheRef = useRef(null)
+  const bgJobRef = useRef({ id: 0, key: null })
+  const bgRetiredRef = useRef([])
+  const suppressPauseRef = useRef(false)
+  const backgroundRef = useRef(background)
+  const backgroundKeyRef = useRef('')
+  const backgroundPlaybackKeyRef = useRef(null)
+  const mediaActionsRef = useRef({})
   // Read from the synth's done callback, which is set up once per pass.
   const repeatRef = useRef(false)
   const startRef = useRef(null)
   useEffect(() => {
     repeatRef.current = repeat
   }, [repeat])
+  useEffect(() => {
+    backgroundRef.current = background
+  }, [background])
 
   const parsed = useMemo(() => parseSolfa(text), [text])
   const result = parsed.ok ? parsed.result : null
@@ -214,6 +289,29 @@ export default function App() {
     [sequences]
   )
 
+  // Everything that changes the sound also invalidates a prepared track.
+  const backgroundKey = useMemo(
+    () =>
+      JSON.stringify({
+        text,
+        key,
+        octave,
+        activeParts,
+        voiceOctaves,
+        tempo,
+        sound,
+        sustain,
+        metronome,
+      }),
+    [text, key, octave, activeParts, voiceOctaves, tempo, sound, sustain, metronome]
+  )
+  const timeline = useMemo(
+    () => (sequences ? buildTimeline(sequences, tempo) : []),
+    [sequences, tempo]
+  )
+  backgroundKeyRef.current = backgroundKey
+  const backgroundPreparing = background && bgStatus === 'preparing'
+
   const cancelUiFrame = useCallback(() => {
     if (uiFrameRef.current) {
       cancelFrame(uiFrameRef.current)
@@ -235,7 +333,7 @@ export default function App() {
       uiFrameRef.current = 0
       setActiveMidi(new Set(activeMidiRef.current))
       setNoteIndexes(noteIndexesRef.current.slice())
-      if (debugAudio && synth.lastBudget) {
+      if (debugAudio && !background && synth.lastBudget) {
         const b = synth.lastBudget
         setAudioStats({
           scheduled: b.scheduled,
@@ -246,12 +344,38 @@ export default function App() {
         })
       }
     })
-  }, [synth])
+  }, [synth, background])
 
   const stopPlayback = useCallback(() => {
-    if (handleRef.current) handleRef.current.stop()
-    handleRef.current = null
+    backgroundPlaybackKeyRef.current = null
+    if (handleRef.current) {
+      handleRef.current.stop()
+      handleRef.current = null
+    }
+    const audio = audioRef.current
+    if (audio) {
+      // Stop is not a pause: the state must go all the way back to the start.
+      suppressPauseRef.current = true
+      audio.pause()
+      try {
+        audio.currentTime = 0
+      } catch {
+        /* no source yet */
+      }
+    }
+    setAudioSessionType('auto')
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'none'
+      } catch {
+        /* unsupported */
+      }
+    }
+    for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
+    bgRetiredRef.current = []
     setIsPlaying(false)
+    setIsPaused(false)
+    setPosition(0)
     resetUi()
   }, [resetUi])
 
@@ -262,20 +386,50 @@ export default function App() {
   }, [sheetKey])
 
   useEffect(() => {
-    if (isPlaying) stopPlayback()
+    if (isPlaying || isPaused) stopPlayback()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sequences])
+
+  // A prepared track is a snapshot of the settings. Tempo, instrument, ring,
+  // metronome and part changes make it wrong, so stop instead of playing on.
+  useEffect(() => {
+    const playingKey = backgroundPlaybackKeyRef.current
+    if (playingKey && playingKey !== backgroundKey) stopPlayback()
+  }, [backgroundKey, stopPlayback])
 
   useEffect(() => {
     return () => {
       if (handleRef.current) handleRef.current.stop()
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const audio = audioRef.current
+      if (audio) {
+        audio.pause()
+        audio.removeAttribute('src')
+        try {
+          audio.load()
+        } catch {
+          /* nothing to release */
+        }
+      }
+      if (bgCacheRef.current?.url) URL.revokeObjectURL(bgCacheRef.current.url)
+      for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      bgJobRef.current.id++
+      setAudioSessionType('auto')
+      if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+        try {
+          navigator.mediaSession.metadata = null
+        } catch {
+          /* unsupported */
+        }
+      }
       cancelUiFrame()
       clearTimeout(tapTimerRef.current)
       if (wavUrlRef.current) URL.revokeObjectURL(wavUrlRef.current)
     }
   }, [synth, cancelUiFrame])
 
-  const startPlayback = useCallback(() => {
+  const startLivePlayback = useCallback(() => {
     if (!sequences || !sequences.length || !totalBeats) return
     if (handleRef.current) handleRef.current.stop()
     handleRef.current = null
@@ -320,14 +474,497 @@ export default function App() {
     setIsPlaying(true)
   }, [sequences, totalBeats, tempo, sound, ring, synth, metronome, resetUi, queueUi])
 
+  const updateMediaPosition = useCallback((at) => {
+    if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
+    const total = bgCacheRef.current?.duration
+    if (!Number.isFinite(total) || total <= 0) return
+    const position = Math.min(Math.max(Number(at) || 0, 0), Math.max(total - 0.01, 0))
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: total,
+        playbackRate: 1,
+        position,
+      })
+    } catch {
+      /* some browsers reject position updates */
+    }
+  }, [])
+
+  /**
+   * Paint the chips and piano keys for a position on the prepared track.
+   * Only calls into React when the sounding notes actually change, so a long
+   * song does not re-render 60 times a second.
+   */
+  const syncTimelineUi = useCallback(
+    (at) => {
+      if (!timeline.length) return
+      const state = timelineAt(timeline, at)
+      const previous = noteIndexesRef.current
+      let changed = state.indexes.length !== previous.length
+      if (!changed) {
+        for (let i = 0; i < state.indexes.length; i++) {
+          if (state.indexes[i] !== previous[i]) {
+            changed = true
+            break
+          }
+        }
+      }
+      if (!changed) {
+        if (state.midi.size !== activeMidiRef.current.size) {
+          changed = true
+        } else {
+          for (const midi of state.midi) {
+            if (!activeMidiRef.current.has(midi)) {
+              changed = true
+              break
+            }
+          }
+        }
+      }
+      if (!changed) return
+      noteIndexesRef.current = state.indexes
+      activeMidiRef.current = state.midi
+      queueUi()
+    },
+    [timeline, queueUi]
+  )
+
+  /**
+   * Turn the current song into a WAV the page can hand to an <audio> element.
+   *
+   * The browser treats that element as real media playback, unlike live Web
+   * Audio, so it keeps going when the tab is hidden, another app is open, or
+   * the phone locks. One render is reused for Play, Stop, Repeat, pause and
+   * seek until a setting that changes the sound changes.
+   */
+  const prepareBackground = useCallback(async () => {
+    if (!backgroundRef.current) return
+    if (!sequences || !sequences.length || !(totalBeats > 0)) return
+    const cached = bgCacheRef.current
+    if (cached?.key === backgroundKey) {
+      setBgStatus('ready')
+      setBgDuration(cached.duration)
+      return
+    }
+    if (bgJobRef.current.key === backgroundKey) return
+    const id = ++bgJobRef.current.id
+    bgJobRef.current.key = backgroundKey
+    setBgStatus('preparing')
+    try {
+      const tail = Math.max(1.4, getVoice(sound).release + ring + 0.3)
+      const buffer = await synth.render(sequences, {
+        tempo,
+        tail,
+        voice: sound,
+        sustain: ring,
+        metronome,
+      })
+      if (
+        bgJobRef.current.id !== id ||
+        !backgroundRef.current ||
+        backgroundKeyRef.current !== backgroundKey
+      ) {
+        return
+      }
+      const url = URL.createObjectURL(audioBufferToWavBlob(buffer))
+      const previous = bgCacheRef.current
+      bgCacheRef.current = { key: backgroundKey, url, duration: buffer.duration }
+      if (previous?.url && previous.url !== url) {
+        if (audioRef.current && audioRef.current.src === previous.url) {
+          bgRetiredRef.current.push(previous.url)
+        } else {
+          URL.revokeObjectURL(previous.url)
+        }
+      }
+      setBgDuration(buffer.duration)
+      setBgStatus('ready')
+    } catch (err) {
+      if (bgJobRef.current.id !== id) return
+      console.error('Background audio preparation failed:', err)
+      setBgStatus('error')
+    } finally {
+      if (bgJobRef.current.id === id) bgJobRef.current.key = null
+    }
+  }, [backgroundKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
+
+  const failBackgroundPlayback = useCallback(
+    (err) => {
+      backgroundPlaybackKeyRef.current = null
+      setAudioError(
+        err && err.message
+          ? `Background audio could not start: ${err.message}`
+          : 'Background audio could not start.'
+      )
+      setIsPlaying(false)
+      setIsPaused(false)
+      setAudioSessionType('auto')
+      resetUi()
+    },
+    [resetUi]
+  )
+
+  const startBackgroundPlayback = useCallback(() => {
+    const audio = audioRef.current
+    const cached = bgCacheRef.current
+    if (!audio || !cached || cached.key !== backgroundKey) return false
+    setAudioError(null)
+    setAudioSessionType('playback')
+    audio.loop = repeatRef.current
+    if (audio.src !== cached.url) {
+      audio.src = cached.url
+      for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
+      bgRetiredRef.current = []
+    }
+    try {
+      audio.currentTime = 0
+    } catch {
+      /* metadata not ready yet */
+    }
+    resetUi()
+    setPosition(0)
+    setBgDuration(cached.duration)
+    backgroundPlaybackKeyRef.current = backgroundKey
+    let playing
+    try {
+      playing = audio.play()
+    } catch (err) {
+      failBackgroundPlayback(err)
+      return false
+    }
+    setIsPlaying(true)
+    setIsPaused(false)
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'playing'
+      } catch {
+        /* unsupported */
+      }
+    }
+    updateMediaPosition(0)
+    if (playing && typeof playing.catch === 'function') {
+      playing.catch(failBackgroundPlayback)
+    }
+    return true
+  }, [backgroundKey, resetUi, updateMediaPosition, failBackgroundPlayback])
+
+  const resumeBackground = useCallback(() => {
+    const audio = audioRef.current
+    const cached = bgCacheRef.current
+    if (!audio || !cached || cached.key !== backgroundKey) return false
+    setAudioError(null)
+    setAudioSessionType('playback')
+    audio.loop = repeatRef.current
+    if (audio.src !== cached.url) {
+      audio.src = cached.url
+      setPosition(0)
+    } else if (audio.ended || audio.currentTime >= cached.duration - 0.01) {
+      try {
+        audio.currentTime = 0
+      } catch {
+        /* metadata not ready yet */
+      }
+      setPosition(0)
+    }
+    backgroundPlaybackKeyRef.current = backgroundKey
+    let playing
+    try {
+      playing = audio.play()
+    } catch (err) {
+      failBackgroundPlayback(err)
+      return false
+    }
+    setIsPlaying(true)
+    setIsPaused(false)
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'playing'
+      } catch {
+        /* unsupported */
+      }
+    }
+    updateMediaPosition(audio.currentTime)
+    if (playing && typeof playing.catch === 'function') {
+      playing.catch(failBackgroundPlayback)
+    }
+    return true
+  }, [backgroundKey, updateMediaPosition, failBackgroundPlayback])
+
+  const pauseBackground = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio || audio.paused) return
+    audio.pause()
+    setIsPlaying(false)
+    setIsPaused(true)
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'paused'
+      } catch {
+        /* unsupported */
+      }
+    }
+  }, [])
+
+  const seekBackground = useCallback(
+    (target) => {
+      const audio = audioRef.current
+      const total = bgCacheRef.current?.duration
+      if (!audio || !Number.isFinite(total) || total <= 0) return
+      const at = Math.min(Math.max(Number(target) || 0, 0), Math.max(total - 0.01, 0))
+      try {
+        audio.currentTime = at
+      } catch {
+        return
+      }
+      setPosition(at)
+      updateMediaPosition(at)
+      if (isPlaying || isPaused) syncTimelineUi(at)
+    },
+    [isPlaying, isPaused, syncTimelineUi, updateMediaPosition]
+  )
+
+  const handleAudioPlay = useCallback(() => {
+    // A fresh play is the point after which a pause is a real user pause.
+    suppressPauseRef.current = false
+    setIsPlaying(true)
+    setIsPaused(false)
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'playing'
+      } catch {
+        /* unsupported */
+      }
+    }
+  }, [])
+
+  const handleAudioPause = useCallback(() => {
+    if (suppressPauseRef.current) return
+    setIsPlaying(false)
+    setIsPaused(true)
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'paused'
+      } catch {
+        /* unsupported */
+      }
+    }
+  }, [])
+
+  const handleAudioEnded = useCallback(() => {
+    backgroundPlaybackKeyRef.current = null
+    setIsPlaying(false)
+    setIsPaused(false)
+    setPosition(0)
+    setAudioSessionType('auto')
+    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+      try {
+        navigator.mediaSession.playbackState = 'none'
+      } catch {
+        /* unsupported */
+      }
+    }
+    resetUi()
+  }, [resetUi])
+
+  const handleAudioTimeUpdate = useCallback(() => {
+    const audio = audioRef.current
+    if (!audio) return
+    setPosition(audio.currentTime)
+    updateMediaPosition(audio.currentTime)
+  }, [updateMediaPosition])
+
+  const handleAudioError = useCallback(() => {
+    backgroundPlaybackKeyRef.current = null
+    setAudioError('Background audio could not play. Try Record WAV or live playback.')
+    setIsPlaying(false)
+    setIsPaused(false)
+    setAudioSessionType('auto')
+    resetUi()
+  }, [resetUi])
+
+  const startPlayback = useCallback(() => {
+    if (background) {
+      if (bgCacheRef.current?.key === backgroundKey) startBackgroundPlayback()
+      return
+    }
+    startLivePlayback()
+  }, [background, backgroundKey, startBackgroundPlayback, startLivePlayback])
+
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
   startRef.current = startPlayback
 
   const handlePlay = () => {
+    if (background) {
+      if (isPaused) {
+        if (bgCacheRef.current?.key === backgroundKey) {
+          resumeBackground()
+        } else {
+          stopPlayback()
+          prepareBackground()
+        }
+        return
+      }
+      if (bgCacheRef.current?.key === backgroundKey && bgStatus === 'ready') {
+        stopPlayback()
+        if (!startBackgroundPlayback()) prepareBackground()
+        return
+      }
+      if (bgStatus === 'error') {
+        stopPlayback()
+        startLivePlayback()
+        setAudioError('Background audio is unavailable, so playback is live only.')
+        return
+      }
+      prepareBackground()
+      return
+    }
     stopPlayback()
-    startPlayback()
+    startLivePlayback()
   }
+
+  const handleBackground = (on) => {
+    if (on === background) return
+    if (isPlaying || isPaused) stopPlayback()
+    backgroundRef.current = on
+    if (on) {
+      const cached = bgCacheRef.current
+      if (cached?.key === backgroundKey) {
+        setBgStatus('ready')
+        setBgDuration(cached.duration)
+      } else {
+        setBgStatus('stale')
+      }
+    } else {
+      bgJobRef.current.id++
+      bgJobRef.current.key = null
+      setBgStatus('off')
+    }
+    setBackground(on)
+    saveBackgroundPref(on)
+  }
+
+  mediaActionsRef.current = {
+    play: handlePlay,
+    pause: pauseBackground,
+    stop: stopPlayback,
+    seek: seekBackground,
+    seekBy: (delta) => seekBackground((audioRef.current?.currentTime || 0) + delta),
+  }
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (audio) audio.loop = repeat
+  }, [repeat, background])
+
+  // Prepare ahead of time, but never while the editor is focused or a track is
+  // already playing: typing should not start a series of expensive renders.
+  useEffect(() => {
+    if (!background) {
+      setBgStatus('off')
+      return
+    }
+    const cached = bgCacheRef.current
+    if (cached?.key === backgroundKey) {
+      setBgStatus('ready')
+      setBgDuration(cached.duration)
+      return
+    }
+    if (
+      isPlaying ||
+      isPaused ||
+      rendering ||
+      textFocused ||
+      !sequences ||
+      !sequences.length ||
+      !(totalBeats > 0)
+    ) {
+      setBgStatus('stale')
+      return
+    }
+    setBgStatus('preparing')
+    const timer = setTimeout(prepareBackground, 400)
+    return () => clearTimeout(timer)
+  }, [
+    background,
+    backgroundKey,
+    isPlaying,
+    isPaused,
+    rendering,
+    textFocused,
+    sequences,
+    totalBeats,
+    prepareBackground,
+  ])
+
+  useEffect(() => {
+    if (!background || !isPlaying) return
+    let frame = 0
+    const tick = () => {
+      const audio = audioRef.current
+      if (audio) syncTimelineUi(audio.currentTime)
+      frame = nextFrame(tick)
+    }
+    frame = nextFrame(tick)
+    return () => cancelFrame(frame)
+  }, [background, isPlaying, syncTimelineUi])
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaSession) return
+    if (!background) {
+      try {
+        navigator.mediaSession.metadata = null
+      } catch {
+        /* unsupported */
+      }
+      return
+    }
+    if (typeof MediaMetadata === 'undefined') return
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: sheetHint,
+        artist: 'Solfa Piano',
+        album: 'Solfa Piano',
+        artwork: mediaArtwork(),
+      })
+    } catch {
+      /* metadata is optional */
+    }
+  }, [background, sheetHint])
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.mediaSession) return
+    const media = navigator.mediaSession
+    const handlers = {
+      play: () => mediaActionsRef.current.play?.(),
+      pause: () => mediaActionsRef.current.pause?.(),
+      stop: () => mediaActionsRef.current.stop?.(),
+      seekbackward: (details) => {
+        mediaActionsRef.current.seekBy?.(-(details?.seekOffset ?? 10))
+      },
+      seekforward: (details) => {
+        mediaActionsRef.current.seekBy?.(details?.seekOffset ?? 10)
+      },
+      seekto: (details) => {
+        if (details?.seekTime != null) mediaActionsRef.current.seek?.(details.seekTime)
+      },
+    }
+    for (const [action, handler] of Object.entries(handlers)) {
+      try {
+        media.setActionHandler(action, handler)
+      } catch {
+        /* action not supported */
+      }
+    }
+    return () => {
+      for (const action of Object.keys(handlers)) {
+        try {
+          media.setActionHandler(action, null)
+        } catch {
+          /* action not supported */
+        }
+      }
+    }
+  }, [])
 
   const handleRecord = async () => {
     if (!sequences || !sequences.length || rendering) return
@@ -476,6 +1113,8 @@ export default function App() {
               setError(null)
               setSavedMsg(null)
             }}
+            onFocus={() => setTextFocused(true)}
+            onBlur={() => setTextFocused(false)}
             spellCheck={false}
             aria-label="Tonic solfa input"
           />
@@ -662,6 +1301,11 @@ export default function App() {
                 Switching it off mid-song lets the current pass finish.
               </li>
               <li>
+                <b>Background</b>: prepares the song once, then keeps it playing when you
+                switch tabs or apps, or lock the screen. Closing the tab still stops it; use{' '}
+                <code>Record WAV</code> and Download to keep a copy.
+              </li>
+              <li>
                 <b>Sustain</b>: the <code>Sustain</code> dropdown adds extra ring-out after each
                 note so chords keep sounding. <code>Off</code> leaves the instrument&apos;s own
                 release alone; <code>Long</code> suits slow hymn singing.
@@ -672,10 +1316,18 @@ export default function App() {
 
         <section className="card player-card">
           <Controls
-            canPlay={!!sequences && totalBeats > 0}
+            canPlay={!!sequences && totalBeats > 0 && !backgroundPreparing}
             isPlaying={isPlaying}
             onPlay={handlePlay}
             onStop={stopPlayback}
+            background={background}
+            onBackground={handleBackground}
+            backgroundPreparing={backgroundPreparing}
+            isPaused={isPaused}
+            onPause={pauseBackground}
+            progress={position}
+            duration={bgDuration}
+            onSeek={seekBackground}
             tempo={tempo}
             onTempo={setTempo}
             sheetKey={key}
@@ -728,12 +1380,28 @@ export default function App() {
             )}
             {!audioError && error && <span className="status-error">{error}</span>}
             {!error && rendering && <span className="status-busy">Rendering audio…</span>}
+            {!audioError && !error && background && bgStatus === 'preparing' && (
+              <span className="status-busy">Preparing background audio…</span>
+            )}
+            {!audioError && !error && background && bgStatus === 'error' && (
+              <span className="status-error">
+                Could not prepare background audio. Play will use live mode.
+              </span>
+            )}
+            {!audioError &&
+              !error &&
+              background &&
+              bgStatus === 'ready' &&
+              !isPlaying &&
+              !isPaused && (
+                <span className="status-ok">Background audio ready.</span>
+              )}
             {!error && !rendering && wavUrl && (
               <span className="status-ok">
                 Recording ready. Use “Download” to save the WAV.
               </span>
             )}
-            {debugAudio && audioStats && (
+            {debugAudio && !background && audioStats && (
               <span className="status-busy">
                 audio: {audioStats.scheduled} scheduled · {audioStats.droppedLate} dropped late ·{' '}
                 {audioStats.skipped} skipped · {audioStats.trimmed} trimmed · {audioStats.nodes}{' '}
@@ -748,6 +1416,17 @@ export default function App() {
           </p>
         </section>
       </div>
+      <audio
+        ref={audioRef}
+        className="bg-audio"
+        preload="auto"
+        playsInline
+        onPlay={handleAudioPlay}
+        onPause={handleAudioPause}
+        onEnded={handleAudioEnded}
+        onTimeUpdate={handleAudioTimeUpdate}
+        onError={handleAudioError}
+      />
     </div>
   )
 }

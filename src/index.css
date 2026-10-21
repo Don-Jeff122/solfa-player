@@ -592,6 +592,56 @@ summary,
   transform: translate(-1px, -4px);
 }
 
+.btn-background {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--muted);
+}
+
+.btn-background.active {
+  border-color: var(--accent);
+  background: rgba(76, 201, 240, 0.14);
+  color: var(--accent);
+}
+
+.btn-background:hover:not(:disabled) {
+  background: rgba(76, 201, 240, 0.1);
+}
+
+/* A small screen with a bottom stand, readable at button size. */
+.btn-icon.background {
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  width: 12px;
+  height: 9px;
+  position: relative;
+}
+
+.btn-icon.background::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: -4px;
+  height: 1.5px;
+  background: currentColor;
+}
+
+.btn-pause {
+  background: #22305a;
+  border-color: #3d4d80;
+}
+
+.btn-icon.pause {
+  width: 10px;
+  height: 12px;
+  border-left: 3px solid currentColor;
+  border-right: 3px solid currentColor;
+}
+
+.bg-audio {
+  display: none;
+}
+
 /* ---------- controls ---------- */
 
 .controls {
@@ -607,6 +657,29 @@ summary,
 
 .controls-row + .controls-row {
   margin-top: 12px;
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.progress-row .time {
+  min-width: 38px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-row .time:last-child {
+  text-align: right;
+}
+
+.progress-row input[type='range'] {
+  flex: 1;
+  min-width: 80px;
 }
 
 .transport {
