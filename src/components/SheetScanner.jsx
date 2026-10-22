@@ -31,15 +31,14 @@ export default function SheetScanner({ onApply }) {
     try {
       // Loaded on demand: pdf.js and the OCR engine are far too large to
       // burden the main bundle for users who just type solfa.
-      const { recognizeFile } = await import('../lib/ocrService.js')
-      const { pagesToRhythmSolfa } = await import('../lib/staff/sheetRhythm.js')
-      const pages = await recognizeFile(file, setProgress)
-      const converted = pagesToRhythmSolfa(pages)
+      const { recognizeSheet } = await import('../lib/sheetRecognition.js')
+      const converted = await recognizeSheet(file, setProgress)
       if (!converted.text.trim()) {
         setState('error')
         setError(
-          'No solfa notes were found in that file. Make sure the sheet shows solfa ' +
-            'syllables (Do Re Mi Fa So La Ti) or single letters, and that the text is clear and upright.'
+          converted.error ||
+            'No solfa notes were found in that file. Make sure the sheet shows solfa ' +
+              'syllables (Do Re Mi Fa So La Ti) or single letters, and that the text is clear and upright.'
         )
         return
       }
@@ -78,6 +77,16 @@ export default function SheetScanner({ onApply }) {
   const lowConfidence = result && result.confidence < 75
   const noisy = result && result.unreadable > 0
   const timed = result && result.timed
+  const mode = result?.mode || 'classic'
+  const modeLabel =
+    mode === 'hymnal'
+      ? 'four-part solfa'
+      : mode === 'staff'
+        ? `rhythm from ${result.staves} staff${result.staves === 1 ? '' : 's'}`
+        : mode === 'text'
+          ? 'PDF text layer'
+          : 'solfa text'
+  const warnings = result?.warnings || []
 
   return (
     <section className="scanner">
@@ -143,12 +152,13 @@ export default function SheetScanner({ onApply }) {
             <span className="tag">{result.pages} page{result.pages === 1 ? '' : 's'}</span>
             <span className="tag">{result.lineCount} line{result.lineCount === 1 ? '' : 's'}</span>
             {result.key && <span className="tag">key {result.key}</span>}
-            {timed ? (
-              <span className="tag good">
-                rhythm from {result.staves} staff{result.staves === 1 ? '' : 's'}
+            <span className={timed || mode === 'hymnal' || mode === 'text' ? 'tag good' : 'tag'}>
+              {modeLabel}
+            </span>
+            {mode === 'hymnal' && result.bars > 0 && (
+              <span className="tag">
+                {result.bars} bar{result.bars === 1 ? '' : 's'}
               </span>
-            ) : (
-              <span className="tag warn">no staff found, so all notes are 1 beat</span>
             )}
             {result.unmatchedNotes > 0 && (
               <span className="tag warn">{result.unmatchedNotes} note{result.unmatchedNotes === 1 ? '' : 's'} unmatched</span>
@@ -156,11 +166,16 @@ export default function SheetScanner({ onApply }) {
             {noisy && <span className="tag warn">{result.unreadable} unreadable</span>}
           </div>
 
-          {(lowConfidence || noisy || !timed || result.unmatchedNotes > 0) && (
+          {warnings.map((warning) => (
+            <p className="scanner-warn" key={warning}>
+              {warning}
+            </p>
+          ))}
+
+          {(lowConfidence || noisy || result.unmatchedNotes > 0) && (
             <p className="scanner-warn">
               Music recognition is never perfect. Read the notes below against your
               original and correct anything wrong before playing.
-              {!timed && ' No five-line staff could be measured, so every note plays as a crotchet.'}
             </p>
           )}
 
@@ -190,10 +205,11 @@ export default function SheetScanner({ onApply }) {
       <p className="scanner-note">
         Reads <b>solfa syllables</b>: Do Re Mi Fa So La Ti, or letters D R M F S L T,
         plus the chromatic Di Ri Fi Si Li and Ra Me Se Le Te.
+        Four-part hymn sheets are read voice by voice from their S A T B rows and
+        barlines; use the original PDF or a clean 300 DPI scan.
         Solfa printed under a five-line staff also gives the <b>note lengths</b>, which
-        are measured from the staff itself; nothing else on the staff is interpreted.
-        Upload a sheet that prints solfa under the notes, or type solfa directly for
-        anything else.
+        are measured from the staff itself. Upload a sheet that prints solfa, or type
+        solfa directly for anything else.
       </p>
     </section>
   )

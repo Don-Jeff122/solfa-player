@@ -58,7 +58,7 @@ export function normalizeSyllable(token) {
 const PART_WORDS = new Set(['bass', 'tenor', 'alto', 'soprano'])
 
 const KEY_LINE_RE =
-  /^\s*(?:key|tonic)\s*[:=]\s*([a-gA-G])\s*([#b]?)\s*$/i
+  /^\s*(?:key|tonic|doh)\s*[:=]\s*([a-gA-G])\s*([#b]?)\s*$/i
 const SOLFA_KEY_RE = /^\s*1\s*=\s*([a-gA-G])\s*([#b]?)\s*$/
 
 /** Read a "Key: G" / "1=F#" declaration, if the line holds one. */

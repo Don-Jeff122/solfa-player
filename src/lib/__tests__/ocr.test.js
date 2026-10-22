@@ -107,6 +107,11 @@ describe('detectKeyLine', () => {
     expect(detectKeyLine('1=C#')).toBe('C#')
   })
 
+  it('reads a hymnal "Doh =" declaration', () => {
+    expect(detectKeyLine('Doh = A')).toBe('A')
+    expect(detectKeyLine('DOH=Bb')).toBe('Bb')
+  })
+
   it('ignores ordinary note lines', () => {
     expect(detectKeyLine('Do Re Mi')).toBe(null)
     expect(detectKeyLine('')).toBe(null)
@@ -118,6 +123,13 @@ describe('structural lines survive conversion', () => {
     const out = textToSolfa('Key: G\nDo Re Mi')
     expect(out.text).toBe('Key: G\ndo re mi')
     expect(out.key).toBe('G')
+    expect(out.unreadable).toBe(0)
+  })
+
+  it('normalises a hymnal key declaration', () => {
+    const out = textToSolfa('Doh = A\nDo Re Mi')
+    expect(out.text).toBe('Key: A\ndo re mi')
+    expect(out.key).toBe('A')
     expect(out.unreadable).toBe(0)
   })
 

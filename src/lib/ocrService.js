@@ -2,6 +2,7 @@ import { createWorker } from 'tesseract.js'
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { extractWords } from './ocr.js'
+import { textItemsToLines } from './pdfText.js'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -73,10 +74,10 @@ export function preprocess(canvas) {
   return canvas
 }
 
-async function pdfToCanvases(file, onProgress) {
+async function pdfToPages(file, onProgress) {
   const buffer = await file.arrayBuffer()
   const doc = await getDocument({ data: buffer }).promise
-  const canvases = []
+  const pages = []
 
   for (let pageNo = 1; pageNo <= doc.numPages; pageNo++) {
     onProgress?.(`Rendering page ${pageNo} of ${doc.numPages}…`)
@@ -91,13 +92,24 @@ async function pdfToCanvases(file, onProgress) {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     await page.render({ canvasContext: ctx, viewport }).promise
-    canvases.push(canvas)
+
+    let textLayer = []
+    try {
+      const content = await page.getTextContent()
+      textLayer = textItemsToLines(content.items)
+    } catch {
+      textLayer = []
+    }
+
+    pages.push({ canvas, textLayer })
   }
-  return canvases
+  return pages
 }
 
 let workerPromise = null
-function getWorker(onProgress) {
+let activeProgress = null
+
+function getWorker() {
   if (!workerPromise) {
     workerPromise = createWorker('eng', 1, {
       workerPath: `${OCR_BASE}/worker/worker.min.js`,
@@ -105,14 +117,38 @@ function getWorker(onProgress) {
       langPath: `${OCR_BASE}/lang`,
       logger: (m) => {
         if (m.status === 'recognizing text') {
-          onProgress?.(`Reading music… ${Math.round((m.progress || 0) * 100)}%`)
+          activeProgress?.(`Reading music… ${Math.round((m.progress || 0) * 100)}%`)
         } else if (m.status) {
-          onProgress?.('Preparing OCR engine…')
+          activeProgress?.('Preparing OCR engine…')
         }
       },
     })
   }
   return workerPromise
+}
+
+/**
+ * OCR a single canvas with the shared worker. Used for full pages as well as
+ * the per-row and per-bar crops the hymnal reader needs.
+ */
+export async function recognizeCanvas(
+  canvas,
+  { onProgress, psm = '6', whitelist = '', preprocess: shouldPreprocess = true } = {}
+) {
+  if (onProgress) activeProgress = onProgress
+  const worker = await getWorker()
+  await worker.setParameters({
+    tessedit_pageseg_mode: psm,
+    tessedit_char_whitelist: whitelist,
+  })
+  const prepared = shouldPreprocess ? preprocess(canvas) : canvas
+  const result = await worker.recognize(prepared, {}, { text: true, blocks: true })
+  return {
+    text: result.data.text || '',
+    confidence: result.data.confidence ?? 0,
+    words: extractWords(result.data.blocks),
+    canvas: prepared,
+  }
 }
 
 /**
@@ -124,27 +160,35 @@ export async function recognizeFile(file, onProgress) {
   const isPdf =
     file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
 
-  let canvases
+  let sourcePages
   if (isPdf) {
-    canvases = await pdfToCanvases(file, onProgress)
+    sourcePages = await pdfToPages(file, onProgress)
   } else {
     onProgress?.('Preparing image…')
     const img = await loadImage(file)
-    canvases = [canvasFrom(img, img.width < 900 ? 2 : 1)]
+    sourcePages = [
+      {
+        canvas: canvasFrom(img, img.width < 900 ? 2 : 1),
+        textLayer: [],
+        hymnalCanvas: canvasFrom(img, 1),
+      },
+    ]
   }
 
-  const worker = await getWorker(onProgress)
   const pages = []
-
-  for (let i = 0; i < canvases.length; i++) {
-    onProgress?.(`Reading music… page ${i + 1} of ${canvases.length}`)
-    const prepared = preprocess(canvases[i])
-    const result = await worker.recognize(prepared, {}, { text: true, blocks: true })
+  for (let i = 0; i < sourcePages.length; i++) {
+    onProgress?.(`Reading music… page ${i + 1} of ${sourcePages.length}`)
+    const result = await recognizeCanvas(sourcePages[i].canvas, {
+      onProgress,
+      psm: '6',
+    })
     pages.push({
-      text: result.data.text || '',
-      confidence: result.data.confidence ?? 0,
-      words: extractWords(result.data.blocks),
-      canvas: prepared,
+      text: result.text,
+      confidence: result.confidence,
+      words: result.words,
+      canvas: result.canvas,
+      hymnalCanvas: sourcePages[i].hymnalCanvas || null,
+      textLayer: sourcePages[i].textLayer || [],
     })
   }
 
