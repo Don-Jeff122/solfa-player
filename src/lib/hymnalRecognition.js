@@ -8,6 +8,7 @@ import {
   normalizeHymnalOcr,
 } from './hymnalScan.js'
 import { parseSolfa } from './parseSolfa.js'
+import { sourceTranscription } from './sourceTranscription.js'
 import { otsuThreshold, toLuma } from './staff/geometry.js'
 
 const CELL_WHITELIST = "drmfslteoai0123:.-_,' "
@@ -209,11 +210,17 @@ function qualityWarnings(analysis, page, emptyCells, unreadable) {
 export async function readHymnalPage(page, options = {}) {
   const analysis = options.analyze ? options.analyze(page) : analyzeCanvas(page)
   const sourceCanvas = page.hymnalCanvas || page.canvas
+  const sourceWords = wordsForCanvas(page, sourceCanvas)
+  const transcript = sourceTranscription(sourceWords, analysis.systems)
+  const sourceText = transcript || String(page.text ?? '')
+  const sourceKind = transcript && sourceWords.length ? 'layout' : 'raw-ocr'
   const warnings = []
   const partial = {
     mode: 'hymnal',
     ok: false,
     text: '',
+    sourceText,
+    sourceKind,
     key: keyFromHymnalText(page.text),
     confidence: page.confidence ?? 0,
     pages: 1,
@@ -331,6 +338,8 @@ export async function readHymnalPage(page, options = {}) {
     ...partial,
     ok: systems.length > 0 && systems.some((system) => system.rows.some((row) => row.cells.some(Boolean))),
     text,
+    sourceText,
+    sourceKind,
     key,
     confidence: confidenceCount ? confidenceSum / confidenceCount : page.confidence ?? 0,
     lineCount: text.split('\n').filter(Boolean).length,
@@ -357,6 +366,8 @@ export async function pagesToHymnalSolfa(pages = [], options = {}) {
   let rows = 0
   let bars = 0
   let pagesWithLayout = 0
+  const sourcePages = []
+  const sourceKinds = []
 
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i]
@@ -365,6 +376,8 @@ export async function pagesToHymnalSolfa(pages = [], options = {}) {
     const result = await readHymnalPage(page, options)
     lowResolution = lowResolution || result.lowResolution
     warnings.push(...(result.warnings || []))
+    sourcePages.push(result.sourceText ?? page.text ?? '')
+    sourceKinds.push(result.sourceKind || 'raw-ocr')
     if (!result.ok) continue
     pagesWithLayout++
     systems.push(...(result.systemsData || []))
@@ -383,6 +396,9 @@ export async function pagesToHymnalSolfa(pages = [], options = {}) {
     bars += result.bars
   }
 
+  const sourceText = sourcePages.filter(Boolean).join('\n\n')
+  const sourceKind = sourceKinds.includes('layout') ? 'layout' : 'raw-ocr'
+
   if (!pagesWithLayout || !systems.length) {
     return {
       mode: 'hymnal',
@@ -390,6 +406,8 @@ export async function pagesToHymnalSolfa(pages = [], options = {}) {
       reason: 'no-layout',
       key,
       text: '',
+      sourceText,
+      sourceKind,
       lowResolution,
       warnings: [...new Set(warnings)],
       unreadable,
@@ -410,6 +428,8 @@ export async function pagesToHymnalSolfa(pages = [], options = {}) {
     mode: 'hymnal',
     ok: true,
     text,
+    sourceText,
+    sourceKind,
     key,
     confidence: confidenceCount ? confidenceSum / confidenceCount : 0,
     pages: pages.length,

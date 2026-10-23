@@ -70,7 +70,52 @@ describe('hymnal page recognition', () => {
     expect(result.text).toContain('Doh = A')
     expect(result.text).toContain('S: d r | m f | s l | t d')
     expect(result.text).toContain('B: d | r | m | f')
+    expect(result.sourceText).toContain('Doh = A')
+    expect(result.sourceText).toContain('D.C.')
+    expect(result.sourceKind).toBe('raw-ocr')
     expect(result.warnings.join(' ')).toContain('D.C.')
+  })
+
+  it('keeps exact source symbols and lyrics separate from playable text', async () => {
+    const sourcePage = {
+      ...page('Dohis E\nD.C.'),
+      words: [
+        { text: 'Dohis', bbox: { x0: 10, y0: 2, x1: 40, y1: 12 } },
+        { text: 'E', bbox: { x0: 45, y0: 2, x1: 53, y1: 12 } },
+        { text: 'S:', bbox: { x0: 10, y0: 52, x1: 28, y1: 62 } },
+        { text: 'd', bbox: { x0: 40, y0: 52, x1: 48, y1: 62 } },
+        { text: '|:', bbox: { x0: 106, y0: 52, x1: 114, y1: 62 } },
+        { text: 'f1', bbox: { x0: 140, y0: 52, x1: 150, y1: 62 } },
+        { text: ':|', bbox: { x0: 206, y0: 52, x1: 214, y1: 62 } },
+        { text: 'O', bbox: { x0: 240, y0: 52, x1: 248, y1: 62 } },
+        { text: 'Me', bbox: { x0: 10, y0: 135, x1: 24, y1: 145 } },
+        { text: 'hyi', bbox: { x0: 30, y0: 135, x1: 46, y1: 145 } },
+        { text: 'ra', bbox: { x0: 52, y0: 135, x1: 62, y1: 145 } },
+        { text: 'D.C.', bbox: { x0: 180, y0: 145, x1: 200, y1: 155 } },
+        { text: '1', bbox: { x0: 300, y0: 155, x1: 308, y1: 165 } },
+      ],
+    }
+    const analysis = {
+      ...ANALYSIS,
+      systems: [
+        {
+          ...ANALYSIS.systems[0],
+          sourceRows: ANALYSIS.systems[0].rows,
+          barLines: [10, 110, 210, 310],
+        },
+      ],
+    }
+    const result = await readHymnalPage(sourcePage, {
+      analyze: () => analysis,
+      crop: () => ({}),
+      ocrCell: () => ({ text: 'd', confidence: 90 }),
+      ocrHeader: () => ({ text: '', confidence: 0 }),
+    })
+
+    expect(result.sourceText).toBe(
+      ['Dohis E', 'S: d |: f1 :| O', 'Me hyi ra', 'D.C.', '1'].join('\n')
+    )
+    expect(result.sourceKind).toBe('layout')
   })
 
   it('writes empty cells as rests', async () => {
@@ -131,6 +176,8 @@ describe('hymnal page recognition', () => {
 
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('no-layout')
+    expect(result.sourceText).toContain('Doh = A')
+    expect(result.sourceKind).toBe('raw-ocr')
     expect(result.warnings.join(' ')).toContain('Could not find four voice rows')
   })
 

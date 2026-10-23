@@ -938,6 +938,40 @@ input[type='range']::-moz-range-thumb {
   margin-top: 14px;
 }
 
+.scanner-panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
+.scanner-pane {
+  min-width: 0;
+}
+
+.scanner-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.scanner-pane-head .scanner-preview-label {
+  margin-bottom: 0;
+}
+
+.scanner-pane-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.scanner-pane .scanner-actions {
+  margin-top: 8px;
+}
+
 .scanner-meta {
   display: flex;
   flex-wrap: wrap;

@@ -63,7 +63,9 @@ describe('hymnal layout', () => {
     const { result } = analyse(drawHymnalPage().canvas)
     expect(result.systems).toHaveLength(2)
     expect(result.systems[0].rows).toHaveLength(4)
+    expect(result.systems[0].sourceRows).toHaveLength(4)
     expect(result.systems[1].rows).toHaveLength(4)
+    expect(result.systems[1].sourceRows).toHaveLength(4)
     expect(result.lowResolution).toBe(true)
   })
 

@@ -313,6 +313,7 @@ export function findLongSystems(rows, mask, width, height, { xTolerance = 4 } = 
 
     systems.push({
       rows: groupRows,
+      sourceRows: groupRows,
       top: groupRows[0].top,
       bottom: groupRows[groupRows.length - 1].bottom,
       barLines,
@@ -401,13 +402,16 @@ export function analyzeHymnalPage(luma, width, height, threshold, options = {}) 
     ? longSystems
     : findHymnalSystems(rows, options).map((system) => ({
         ...system,
+        sourceRows: system.rows,
         barLines: systemBarLines(system, mask, width, height, options),
       }))
   const systems = rawSystems.map((system) => {
+    const sourceRows = system.sourceRows || system.rows
     const selected = selectVoiceRows(system.rows, options.words)
     return {
       ...system,
       rows: selected,
+      sourceRows,
       top: selected.length ? selected[0].top : system.top,
       bottom: selected.length ? selected[selected.length - 1].bottom : system.bottom,
     }

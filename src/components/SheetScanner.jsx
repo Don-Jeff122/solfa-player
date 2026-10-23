@@ -9,6 +9,7 @@ export default function SheetScanner({ onApply }) {
   const [error, setError] = useState(null)
   const [dragging, setDragging] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [copied, setCopied] = useState(false)
   const inputRef = useRef(null)
   const previewRef = useRef(null)
 
@@ -16,6 +17,7 @@ export default function SheetScanner({ onApply }) {
     if (!file) return
     setError(null)
     setResult(null)
+    setCopied(false)
     setState('working')
     setProgress('Starting…')
 
@@ -63,6 +65,29 @@ export default function SheetScanner({ onApply }) {
     setResult(null)
   }
 
+  async function copySource() {
+    if (!result?.sourceText) return
+    try {
+      await navigator.clipboard.writeText(result.sourceText)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  function downloadSource() {
+    if (!result?.sourceText) return
+    const blob = new Blob([result.sourceText], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'sheet-source.txt'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
   function reset() {
     setState('idle')
     setProgress('')
@@ -87,6 +112,20 @@ export default function SheetScanner({ onApply }) {
           ? 'PDF text layer'
           : 'solfa text'
   const warnings = result?.warnings || []
+  const sourceText = result?.sourceText || ''
+  const sourceLineCount = sourceText ? sourceText.split('\n').length : 0
+  const sourceKindLabel =
+    result?.sourceKind === 'layout'
+      ? 'rows and bars'
+      : result?.sourceKind === 'pdf-text-layer'
+        ? 'PDF text layer'
+        : 'raw OCR'
+  const sourceNote =
+    result?.sourceKind === 'pdf-text-layer'
+      ? 'Text taken from the PDF text layer. Symbols and wording are not normalized.'
+      : result?.sourceKind === 'layout'
+        ? 'Raw OCR arranged by rows and bars. Symbols and wording are not normalized.'
+        : 'Raw OCR. Symbols and wording are not normalized.'
 
   return (
     <section className="scanner">
@@ -166,50 +205,98 @@ export default function SheetScanner({ onApply }) {
             {noisy && <span className="tag warn">{result.unreadable} unreadable</span>}
           </div>
 
-          {warnings.map((warning) => (
-            <p className="scanner-warn" key={warning}>
-              {warning}
-            </p>
-          ))}
+          <div className="scanner-panes">
+            <div className="scanner-pane">
+              <div className="scanner-pane-head">
+                <label className="scanner-preview-label" htmlFor="scanner-source-text">
+                  Exact transcription
+                </label>
+                <span className="tag">{sourceKindLabel}</span>
+              </div>
+              <p className="scanner-pane-note">{sourceNote}</p>
+              <textarea
+                id="scanner-source-text"
+                className="scanner-text"
+                value={sourceText}
+                onChange={(e) => {
+                  setCopied(false)
+                  setResult({ ...result, sourceText: e.target.value })
+                }}
+                rows={Math.min(16, Math.max(6, sourceLineCount + 1))}
+                spellCheck={false}
+              />
+              <div className="scanner-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={copySource}
+                  disabled={!sourceText}
+                >
+                  {copied ? 'Copied' : 'Copy exact text'}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={downloadSource}
+                  disabled={!sourceText}
+                >
+                  Download .txt
+                </button>
+              </div>
+            </div>
 
-          {(lowConfidence || noisy || result.unmatchedNotes > 0) && (
-            <p className="scanner-warn">
-              Music recognition is never perfect. Read the notes below against your
-              original and correct anything wrong before playing.
-            </p>
-          )}
+            <div className="scanner-pane">
+              <div className="scanner-pane-head">
+                <label className="scanner-preview-label" htmlFor="scanner-text">
+                  Playable interpretation
+                </label>
+                <span className="tag">converted</span>
+              </div>
+              <p className="scanner-pane-note">
+                This is the converted text that will be used for playback.
+              </p>
 
-          <label className="scanner-preview-label" htmlFor="scanner-text">
-            Recognised notes (edit if needed)
-          </label>
-          <textarea
-            id="scanner-text"
-            className="scanner-text"
-            value={result.text}
-            onChange={(e) => setResult({ ...result, text: e.target.value })}
-            rows={Math.min(10, Math.max(3, result.lineCount + 1))}
-            spellCheck={false}
-          />
+              {warnings.map((warning) => (
+                <p className="scanner-warn" key={warning}>
+                  {warning}
+                </p>
+              ))}
 
-          <div className="scanner-actions">
-            <button type="button" className="btn btn-primary" onClick={apply}>
-              Use these notes
-            </button>
-            <button type="button" className="btn" onClick={reset}>
-              Discard
-            </button>
+              {(lowConfidence || noisy || result.unmatchedNotes > 0) && (
+                <p className="scanner-warn">
+                  Music recognition is never perfect. Read the notes below against your
+                  original and correct anything wrong before playing.
+                </p>
+              )}
+
+              <textarea
+                id="scanner-text"
+                className="scanner-text"
+                value={result.text}
+                onChange={(e) => setResult({ ...result, text: e.target.value })}
+                rows={Math.min(10, Math.max(3, result.lineCount + 1))}
+                spellCheck={false}
+              />
+
+              <div className="scanner-actions">
+                <button type="button" className="btn btn-primary" onClick={apply}>
+                  Use playable notes
+                </button>
+                <button type="button" className="btn" onClick={reset}>
+                  Discard
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       <p className="scanner-note">
-        Reads <b>solfa syllables</b>: Do Re Mi Fa So La Ti, or letters D R M F S L T,
-        plus the chromatic Di Ri Fi Si Li and Ra Me Se Le Te.
+        The exact pane keeps the printed note letters, symbols, headers and lyrics
+        unmodified. The playable pane converts a copy into tonic solfa for playback.
         Four-part hymn sheets are read voice by voice from their S A T B rows and
-        barlines; use the original PDF or a clean 300 DPI scan.
-        Solfa printed under a five-line staff also gives the <b>note lengths</b>, which
-        are measured from the staff itself. Upload a sheet that prints solfa, or type
-        solfa directly for anything else.
+        barlines; use the original PDF or a clean 300 DPI scan. Solfa printed under
+        a five-line staff still supplies note lengths for the playable copy.
       </p>
     </section>
   )

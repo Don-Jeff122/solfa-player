@@ -8,6 +8,14 @@ describe('sheet recognition dispatch', () => {
     expect(result.ok).toBe(true)
     expect(result.key).toBe('A')
     expect(result.text).toContain('S: d | r')
+    expect(result.sourceText).toBe('Doh = A\nS: d | r\nA: f | s')
+    expect(result.sourceKind).toBe('pdf-text-layer')
+  })
+
+  it('preserves the text layer verbatim for the exact pane', () => {
+    const raw = '\nDoh = A\nS: d | r\n'
+    const result = tryTextLayer(raw)
+    expect(result.sourceText).toBe(raw)
   })
 
   it('accepts a classic solfa text layer', () => {
@@ -37,6 +45,8 @@ describe('sheet recognition dispatch', () => {
     expect(result.mode).toBe('hymnal')
     expect(result.ok).toBe(true)
     expect(result.key).toBe('A')
+    expect(result.sourceText).toBe('Doh = A\nS: d | r')
+    expect(result.sourceKind).toBe('raw-ocr')
   })
 
   it('falls back to classic solfa when no layout is found', async () => {
@@ -53,5 +63,7 @@ describe('sheet recognition dispatch', () => {
     expect(result.mode).toBe('classic')
     expect(result.ok).toBe(true)
     expect(result.text).toContain('d')
+    expect(result.sourceText).toBe('Do Re Mi')
+    expect(result.sourceKind).toBe('raw-ocr')
   })
 })
