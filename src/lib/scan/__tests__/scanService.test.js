@@ -179,7 +179,7 @@ describe('mergePageResults', () => {
     const regionPage = {
       pageNumber: 1,
       index: 0,
-      exactText: 'S: d :- /m :r',
+      exactText: 'Doh = C\nPraise the Lord\nS: d :- /m :r',
       sourceKind: 'raw-ocr',
       uncertainty: [],
       uncertaintyCount: 0,
@@ -197,7 +197,7 @@ describe('mergePageResults', () => {
     const merged = mergePageResults([regionPage])
 
     expect(merged.ok).toBe(false)
-    expect(merged.sourceText).toBe('S: d :- /m :r')
+    expect(merged.sourceText).toBe('Doh = C\nPraise the Lord\nS: d :- /m :r')
     expect(merged.lineCount).toBe(1)
     expect(merged.pageResults).toHaveLength(1)
     expect(merged.warnings.join(' ')).toMatch(/no playable notes/i)

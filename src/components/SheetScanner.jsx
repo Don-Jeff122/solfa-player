@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import DocumentViewer from './scanner/DocumentViewer.jsx'
 import ScanResults from './scanner/ScanResults.jsx'
+import { notesOnly } from '../lib/scan/notesOnly.js'
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/bmp,image/gif,application/pdf'
 
@@ -240,7 +241,7 @@ export default function SheetScanner({ onApply, onClose }) {
     }
     setRegion(null)
     setNotice(
-      `Region ${mode === 'replace' ? 'replaced' : 'added to'} the page transcription. Rebuild the playable copy when you are ready.`
+      `Region ${mode === 'replace' ? 'replaced' : 'added to'} the page notes. Rebuild the playable copy when you are ready.`
     )
   }
 
@@ -327,12 +328,19 @@ export default function SheetScanner({ onApply, onClose }) {
         denoise,
         onProgress: setProgress,
       })
-      setRegion(found)
+      const text = notesOnly(found.text)
+      const region = {
+        ...found,
+        text,
+        ok: Boolean(text),
+        error: text ? null : found.error || 'No solfa note lines were found in the region.',
+      }
+      setRegion(region)
       setSelectMode(false)
-      if (!found.ok) setError(found.error)
+      if (!region.ok) setError(region.error)
       else {
         setNotice(
-          'Region read. Check it, then insert it into the page transcription or replace the page text.'
+          'Region read. Check the notes, then insert them into the page or replace the page notes.'
         )
       }
     } catch (reason) {
@@ -346,19 +354,19 @@ export default function SheetScanner({ onApply, onClose }) {
   async function rebuildPlayableCopy({ quiet = false } = {}) {
     const text = allExactText()
     if (!text.trim()) {
-      setError('The exact transcription is empty.')
+      setError('The notes are empty.')
       return null
     }
     const { rebuildPlayable } = await import('../lib/scan/scanService.js')
     const rebuilt = rebuildPlayable(text)
     if (!rebuilt.ok) {
-      setError(rebuilt.error || 'The corrected transcription could not be read.')
+      setError(rebuilt.error || 'The corrected notes could not be read.')
       return null
     }
     setPlayableText(rebuilt.text)
     setExactDirty(false)
     setError(null)
-    if (!quiet) setNotice('Playable copy rebuilt from your corrected transcription.')
+    if (!quiet) setNotice('Playable copy rebuilt from your corrected notes.')
     setResult((current) => {
       if (!current) return current
       return {
@@ -558,10 +566,11 @@ export default function SheetScanner({ onApply, onClose }) {
         )}
 
         <p className="scanner-note">
-          Recognition is never perfect. The exact pane keeps printed letters, punctuation,
-          part rows, lyrics and headers unmodified; the playable pane is a separate derived
-          copy. Low-confidence tokens are flagged, not guessed. Nothing leaves your device.
-          For best results use a straight 300 DPI scan or the original PDF.
+          Recognition is never perfect. The notes pane keeps printed note symbols, barlines
+          and rhythm marks; headings, lyrics, key lines and part labels are hidden. The
+          playable pane is a separate derived copy. Low-confidence tokens are flagged, not
+          guessed. Nothing leaves your device. For best results use a straight 300 DPI scan
+          or the original PDF.
         </p>
 
         <input

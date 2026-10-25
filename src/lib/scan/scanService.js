@@ -18,6 +18,7 @@ import { assembleHymnalSheet } from '../hymnalScan.js'
 import { rhythmToSolfa } from '../staff/sheetRhythm.js'
 import { prepareCanvas, cropFraction } from './canvasTools.js'
 import { recognizeCanvas } from '../ocrService.js'
+import { notesOnly } from './notesOnly.js'
 import { uncertainWords } from './uncertainty.js'
 
 const HYMN_ROW_RE = /^\s*[SATBL]\d*\s*[:：]/m
@@ -429,7 +430,7 @@ export function mergePageResults(pages = []) {
     sourceKind,
     pages: ordered.length,
     pageResults: ordered,
-    lineCount: (merged.text?.trim() ? merged.text : exactText)
+    lineCount: (merged.text?.trim() ? merged.text : notesOnly(exactText))
       .split('\n')
       .filter(Boolean).length,
     warnings: [...new Set(warnings)],

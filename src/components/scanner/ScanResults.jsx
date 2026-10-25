@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { notesOnly } from '../../lib/scan/notesOnly.js'
 
 async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {
@@ -49,13 +50,14 @@ function modeLabel(result) {
 }
 
 function sourceNote(result) {
+  const notes = 'Only solfa note lines are kept; headings, lyrics, key lines and part labels are hidden.'
   if (result?.sourceKind === 'pdf-text-layer') {
-    return 'Text comes from the PDF text layer. Symbols, spacing and wording are not normalized.'
+    return `Notes come from the PDF text layer. ${notes}`
   }
   if (result?.sourceKind === 'layout') {
-    return 'Raw OCR arranged by its printed rows and barlines. Symbols and wording are not normalized.'
+    return `Notes come from the printed rows and barlines. ${notes}`
   }
-  return 'Raw OCR words in reading order. Symbols and wording are not normalized.'
+  return `Notes come from the page in reading order. ${notes}`
 }
 
 function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, onDismiss }) {
@@ -73,7 +75,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
         onChange={(event) => setDraft(event.target.value)}
         rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
         spellCheck={false}
-        aria-label="Recognized text from the selected region"
+        aria-label="Recognized notes from the selected region"
       />
       <div className="scanner-actions">
         <button
@@ -82,7 +84,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
           onClick={() => onInsert(draft)}
           disabled={!draft.trim() || scanning}
         >
-          Insert into page
+          Insert into notes
         </button>
         <button
           type="button"
@@ -90,7 +92,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
           onClick={() => onReplace(draft)}
           disabled={!draft.trim() || scanning}
         >
-          Replace page text
+          Replace page notes
         </button>
         <button
           type="button"
@@ -167,10 +169,10 @@ export default function ScanResults({
 
   const page = result?.pageResults?.find((entry) => entry.pageNumber === activePage) || null
   const allExact = (result?.pageResults || [])
-    .map((entry) => entry.exactText)
+    .map((entry) => notesOnly(entry.exactText))
     .filter(Boolean)
     .join('\n\n')
-  const exact = page?.exactText || ''
+  const exact = notesOnly(page?.exactText || '')
   const uncertain = page?.uncertainty || []
   const warnings = result?.warnings || []
   const key = result?.key
@@ -213,15 +215,15 @@ export default function ScanResults({
 
       {!result ? (
         <div className="scanner-empty">
-          <h3>Recognized text will appear here</h3>
+          <h3>Recognized notes will appear here</h3>
           <p>
-            Choose a page, then press <b>Scan this page</b>. The original stays visible
-            beside the result so you can check every symbol before using it.
+            Choose a page, then press <b>Scan this page</b>. Only solfa note lines are
+            kept; the original stays visible so you can check every symbol.
           </p>
           <ul>
             <li>Nothing is uploaded; OCR runs on this device.</li>
-            <li>Unclear words are flagged instead of guessed.</li>
-            <li>The playable copy is separate from the exact transcription.</li>
+            <li>Unclear notes are flagged instead of guessed.</li>
+            <li>Lyrics, headings, key lines and part labels are hidden.</li>
           </ul>
         </div>
       ) : (
@@ -306,7 +308,7 @@ export default function ScanResults({
             <>
               <div className="scanner-pane-head">
                 <label className="scanner-preview-label" htmlFor="scanner-source-text">
-                  Exact transcription · page {activePage}
+                  Notes only · page {activePage}
                 </label>
                 <span className="tag">
                   {page.sourceKind === 'layout'
@@ -326,7 +328,7 @@ export default function ScanResults({
                 rows={Math.min(20, Math.max(8, exact.split('\n').length + 2))}
                 spellCheck={false}
                 disabled={scanning}
-                aria-label={`Exact transcription for page ${activePage}`}
+                aria-label={`Notes only for page ${activePage}`}
               />
               <div className="scanner-actions">
                 <button
@@ -335,7 +337,7 @@ export default function ScanResults({
                   onClick={() => copy('exact', allExact)}
                   disabled={!allExact}
                 >
-                  {copied === 'exact' ? 'Copied all text' : 'Copy text'}
+                  {copied === 'exact' ? 'Copied all notes' : 'Copy notes'}
                 </button>
                 <button type="button" className="btn" onClick={() => selectAll(exactRef)}>
                   Select all
@@ -343,7 +345,7 @@ export default function ScanResults({
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => downloadText(allExact, 'solfa-transcription.txt')}
+                  onClick={() => downloadText(allExact, 'solfa-notes.txt')}
                   disabled={!allExact}
                 >
                   Download .txt
@@ -381,7 +383,7 @@ export default function ScanResults({
                   <span className="tag">derived · editable</span>
                 </div>
                 <p className="scanner-pane-note">
-                  This is the copy the player will receive. Edit the exact transcription above
+                  This is the copy the player will receive. Edit the notes above
                   and rebuild if recognition needs correcting.
                 </p>
                 <textarea
@@ -397,8 +399,8 @@ export default function ScanResults({
                 />
                 {exactDirty && (
                   <p className="scanner-warn">
-                    The exact transcription changed. Rebuild the playable copy so your
-                    corrections are the ones that play.
+                    The notes changed. Rebuild the playable copy so your corrections
+                    are the ones that play.
                   </p>
                 )}
                 <div className="scanner-actions">
