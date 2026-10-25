@@ -1,303 +1,591 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import DocumentViewer from './scanner/DocumentViewer.jsx'
+import ScanResults from './scanner/ScanResults.jsx'
 
-const ACCEPT = 'image/png,image/jpeg,image/webp,image/bmp,application/pdf'
+const ACCEPT = 'image/png,image/jpeg,image/webp,image/bmp,image/gif,application/pdf'
 
-export default function SheetScanner({ onApply }) {
-  const [state, setState] = useState('idle')
+function emptyRegionPage(pageNumber, text) {
+  return {
+    pageNumber,
+    index: pageNumber - 1,
+    exactText: text,
+    sourceKind: 'raw-ocr',
+    uncertainty: [],
+    uncertaintyCount: 0,
+    usedTextLayer: false,
+    mode: 'classic',
+    key: null,
+    playable: {
+      mode: 'classic',
+      ok: false,
+      text: '',
+      key: null,
+      confidence: 0,
+      warnings: [],
+      unreadable: 0,
+      unmatchedNotes: 0,
+      lowResolution: false,
+      timed: false,
+      staves: 0,
+      systems: 0,
+      rows: 0,
+      bars: 0,
+      emptyCells: 0,
+      parseError: null,
+    },
+  }
+}
+
+export default function SheetScanner({ onApply, onClose }) {
+  const [doc, setDoc] = useState(null)
+  const [docInfo, setDocInfo] = useState(null)
+  const [pageIndex, setPageIndex] = useState(0)
+  const [preview, setPreview] = useState(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const [rotation, setRotation] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selection, setSelection] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [progress, setProgress] = useState('')
   const [result, setResult] = useState(null)
+  const [activePage, setActivePage] = useState(1)
+  const [playableText, setPlayableText] = useState('')
+  const [exactDirty, setExactDirty] = useState(false)
+  const [region, setRegion] = useState(null)
   const [error, setError] = useState(null)
-  const [dragging, setDragging] = useState(false)
-  const [preview, setPreview] = useState(null)
-  const [copied, setCopied] = useState(false)
-  const inputRef = useRef(null)
-  const previewRef = useRef(null)
+  const [notice, setNotice] = useState('')
+  const [enhance, setEnhance] = useState(true)
+  const [denoise, setDenoise] = useState(false)
 
-  async function handleFile(file) {
+  const docRef = useRef(null)
+  const resultRef = useRef(null)
+  const stopRef = useRef(false)
+  const fileInputRef = useRef(null)
+  const cameraInputRef = useRef(null)
+  const scrollingRef = useRef('')
+
+  useEffect(() => {
+    resultRef.current = result
+  }, [result])
+
+  useEffect(() => {
+    scrollingRef.current = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = scrollingRef.current
+      const current = docRef.current
+      docRef.current = null
+      current?.close?.().catch?.(() => {})
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!doc) return
+    let alive = true
+    doc
+      .getPreview(pageIndex, { rotation })
+      .then((next) => {
+        if (alive) setPreview(next)
+      })
+      .catch((reason) => {
+        if (alive) setError(reason?.message || 'Could not render that page.')
+      })
+      .finally(() => {
+        if (alive) setPreviewBusy(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [doc, pageIndex, rotation])
+
+  async function closeDocument() {
+    const current = docRef.current
+    docRef.current = null
+    setDoc(null)
+    setDocInfo(null)
+    setPreview(null)
+    setPreviewBusy(false)
+    setResult(null)
+    resultRef.current = null
+    setPlayableText('')
+    setRegion(null)
+    setSelection(null)
+    setSelectMode(false)
+    setActivePage(1)
+    setPageIndex(0)
+    setExactDirty(false)
+    setProgress('')
+    setError(null)
+    setNotice('')
+    if (current) {
+      try {
+        await current.close()
+      } catch {
+        /* the handle is already gone */
+      }
+    }
+  }
+
+  async function loadFile(file) {
     if (!file) return
     setError(null)
+    setNotice('')
+    setPreview(null)
     setResult(null)
-    setCopied(false)
-    setState('working')
-    setProgress('Starting…')
+    resultRef.current = null
+    setPlayableText('')
+    setRegion(null)
+    setSelection(null)
+    setSelectMode(false)
+    setExactDirty(false)
+    setLoading(true)
+    setPreviewBusy(true)
+    setProgress('Opening the document…')
 
-    if (previewRef.current) URL.revokeObjectURL(previewRef.current)
-    if (file.type.startsWith('image/')) {
-      previewRef.current = URL.createObjectURL(file)
-      setPreview(previewRef.current)
-    } else {
-      previewRef.current = null
-      setPreview(null)
+    const previous = docRef.current
+    docRef.current = null
+    setDoc(null)
+    if (previous) {
+      try {
+        await previous.close()
+      } catch {
+        /* ignore a stale handle */
+      }
     }
 
     try {
-      // Loaded on demand: pdf.js and the OCR engine are far too large to
-      // burden the main bundle for users who just type solfa.
-      const { recognizeSheet } = await import('../lib/sheetRecognition.js')
-      const converted = await recognizeSheet(file, setProgress)
-      if (!converted.text.trim()) {
-        setState('error')
-        setError(
-          converted.error ||
-            'No solfa notes were found in that file. Make sure the sheet shows solfa ' +
-              'syllables (Do Re Mi Fa So La Ti) or single letters, and that the text is clear and upright.'
-        )
+      const { openDocument } = await import('../lib/documentService.js')
+      const handle = await openDocument(file, { onProgress: setProgress })
+      docRef.current = handle
+      setDoc(handle)
+      setDocInfo({
+        name: handle.name,
+        kind: handle.kind,
+        pageCount: handle.pageCount,
+      })
+      setPageIndex(0)
+      setActivePage(1)
+      setRotation(0)
+      setZoom(1)
+      setProgress('')
+    } catch (reason) {
+      setError(reason?.message || 'Could not open that file.')
+      setPreviewBusy(false)
+      setProgress('')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function changePage(next) {
+    if (!docInfo) return
+    const clamped = Math.min(docInfo.pageCount - 1, Math.max(0, next))
+    if (clamped === pageIndex) return
+    setPreviewBusy(true)
+    setPreview(null)
+    setError(null)
+    setPageIndex(clamped)
+    setActivePage(clamped + 1)
+    setSelection(null)
+    setSelectMode(false)
+    setRegion(null)
+  }
+
+  function rotate(delta) {
+    setPreviewBusy(true)
+    setPreview(null)
+    setError(null)
+    setSelection(null)
+    setSelectMode(false)
+    setRegion(null)
+    setRotation((current) => ((current + delta) % 360 + 360) % 360)
+  }
+
+  function updateExact(pageNumber, text) {
+    setExactDirty(true)
+    setRegion(null)
+    setResult((current) => {
+      if (!current) return current
+      const pageResults = current.pageResults.map((page) =>
+        page.pageNumber === pageNumber ? { ...page, exactText: text } : page
+      )
+      const sourceText = pageResults
+        .map((page) => page.exactText)
+        .filter(Boolean)
+        .join('\n\n')
+      return { ...current, pageResults, sourceText }
+    })
+  }
+
+  async function mergeRegionText(text, mode) {
+    const pageNumber = pageIndex + 1
+    const current = resultRef.current
+    const page = current?.pageResults?.find((entry) => entry.pageNumber === pageNumber)
+    const previous = page?.exactText || ''
+    const nextText =
+      mode === 'replace' ? text : previous ? `${previous.trimEnd()}\n${text}` : text
+
+    if (current && page) {
+      updateExact(pageNumber, nextText)
+    } else {
+      const { mergePageResults } = await import('../lib/scan/scanService.js')
+      const pages = current
+        ? [...current.pageResults, emptyRegionPage(pageNumber, nextText)]
+        : [emptyRegionPage(pageNumber, nextText)]
+      setResult(mergePageResults(pages.sort((a, b) => a.index - b.index)))
+      setExactDirty(true)
+      setActivePage(pageNumber)
+    }
+    setRegion(null)
+    setNotice(
+      `Region ${mode === 'replace' ? 'replaced' : 'added to'} the page transcription. Rebuild the playable copy when you are ready.`
+    )
+  }
+
+  function allExactText() {
+    return (resultRef.current?.pageResults || [])
+      .map((page) => page.exactText)
+      .filter(Boolean)
+      .join('\n\n')
+  }
+
+  async function applyPages(indexes) {
+    if (!doc || scanning || !indexes.length) return
+    stopRef.current = false
+    setScanning(true)
+    setError(null)
+    setNotice('')
+    setProgress(
+      indexes.length > 1
+        ? `Scanning ${indexes.length} pages…`
+        : `Scanning page ${indexes[0] + 1}…`
+    )
+
+    try {
+      const { scanDocument, mergePageResults } = await import('../lib/scan/scanService.js')
+      const { pages } = await scanDocument(doc, indexes, {
+        rotation,
+        autoStraighten: enhance,
+        contrast: enhance,
+        denoise,
+        shouldStop: () => stopRef.current,
+        onProgress: setProgress,
+      })
+
+      if (!pages.length) {
+        setNotice('Recognition stopped before any page finished.')
         return
       }
-      setResult(converted)
-      setState('done')
-    } catch (e) {
-      setState('error')
-      setError(e?.message || 'Could not read that file.')
+
+      const existing = new Map(
+        (resultRef.current?.pageResults || []).map((page) => [page.index, page])
+      )
+      for (const page of pages) existing.set(page.index, page)
+      const merged = mergePageResults(
+        [...existing.values()].sort((a, b) => a.index - b.index)
+      )
+
+      setResult(merged)
+      setPlayableText(merged.text || '')
+      setExactDirty(false)
+      if (indexes.includes(pageIndex)) setActivePage(pageIndex + 1)
+      else {
+        setActivePage(pages[0].index + 1)
+        setPageIndex(pages[0].index)
+      }
+      if (!merged.ok) {
+        setError(merged.error || 'No playable notes were found on that page.')
+      } else {
+        const stopped = stopRef.current || pages.length < indexes.length
+        setNotice(
+          stopped
+            ? `Stopped after ${pages.length} page${pages.length === 1 ? '' : 's'}. Check the flagged tokens against the original.`
+            : `Scanned ${pages.length} page${pages.length === 1 ? '' : 's'} on this device. Check the flagged tokens against the original.`
+        )
+      }
+    } catch (reason) {
+      setError(reason?.message || 'The scan could not be completed.')
+    } finally {
+      setScanning(false)
+      setProgress('')
+      stopRef.current = false
     }
   }
 
-  function onDrop(e) {
-    e.preventDefault()
-    setDragging(false)
-    handleFile(e.dataTransfer.files?.[0])
-  }
-
-  function apply() {
-    if (!result) return
-    onApply(result.text, result.key)
-    setState('idle')
-    setResult(null)
-  }
-
-  async function copySource() {
-    if (!result?.sourceText) return
-    try {
-      await navigator.clipboard.writeText(result.sourceText)
-      setCopied(true)
-    } catch {
-      setCopied(false)
-    }
-  }
-
-  function downloadSource() {
-    if (!result?.sourceText) return
-    const blob = new Blob([result.sourceText], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'sheet-source.txt'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 0)
-  }
-
-  function reset() {
-    setState('idle')
-    setProgress('')
-    setResult(null)
+  async function scanSelectedRegion() {
+    if (!doc || !selection || scanning) return
+    setScanning(true)
     setError(null)
-    if (previewRef.current) URL.revokeObjectURL(previewRef.current)
-    previewRef.current = null
-    setPreview(null)
-    if (inputRef.current) inputRef.current.value = ''
+    setNotice('')
+    setProgress('Reading the selected region…')
+    try {
+      const { scanRegion } = await import('../lib/scan/scanService.js')
+      const found = await scanRegion(doc, pageIndex, selection, {
+        rotation,
+        denoise,
+        onProgress: setProgress,
+      })
+      setRegion(found)
+      setSelectMode(false)
+      if (!found.ok) setError(found.error)
+      else {
+        setNotice(
+          'Region read. Check it, then insert it into the page transcription or replace the page text.'
+        )
+      }
+    } catch (reason) {
+      setError(reason?.message || 'The selected region could not be read.')
+    } finally {
+      setScanning(false)
+      setProgress('')
+    }
   }
 
-  const lowConfidence = result && result.confidence < 75
-  const noisy = result && result.unreadable > 0
-  const timed = result && result.timed
-  const mode = result?.mode || 'classic'
-  const modeLabel =
-    mode === 'hymnal'
-      ? 'four-part solfa'
-      : mode === 'staff'
-        ? `rhythm from ${result.staves} staff${result.staves === 1 ? '' : 's'}`
-        : mode === 'text'
-          ? 'PDF text layer'
-          : 'solfa text'
-  const warnings = result?.warnings || []
-  const sourceText = result?.sourceText || ''
-  const sourceLineCount = sourceText ? sourceText.split('\n').length : 0
-  const sourceKindLabel =
-    result?.sourceKind === 'layout'
-      ? 'rows and bars'
-      : result?.sourceKind === 'pdf-text-layer'
-        ? 'PDF text layer'
-        : 'raw OCR'
-  const sourceNote =
-    result?.sourceKind === 'pdf-text-layer'
-      ? 'Text taken from the PDF text layer. Symbols and wording are not normalized.'
-      : result?.sourceKind === 'layout'
-        ? 'Raw OCR arranged by rows and bars. Symbols and wording are not normalized.'
-        : 'Raw OCR. Symbols and wording are not normalized.'
+  async function rebuildPlayableCopy({ quiet = false } = {}) {
+    const text = allExactText()
+    if (!text.trim()) {
+      setError('The exact transcription is empty.')
+      return null
+    }
+    const { rebuildPlayable } = await import('../lib/scan/scanService.js')
+    const rebuilt = rebuildPlayable(text)
+    if (!rebuilt.ok) {
+      setError(rebuilt.error || 'The corrected transcription could not be read.')
+      return null
+    }
+    setPlayableText(rebuilt.text)
+    setExactDirty(false)
+    setError(null)
+    if (!quiet) setNotice('Playable copy rebuilt from your corrected transcription.')
+    setResult((current) => {
+      if (!current) return current
+      return {
+        ...current,
+        mode: rebuilt.mode || current.mode,
+        text: rebuilt.text,
+        key: rebuilt.key || current.key,
+        lineCount: rebuilt.text.split('\n').filter(Boolean).length,
+        ok: true,
+        error: null,
+        parseError: null,
+      }
+    })
+    return rebuilt
+  }
+
+  async function useInPlayer() {
+    if (!resultRef.current) return
+    let text = playableText.trim()
+    let key = resultRef.current.key
+    if (exactDirty) {
+      const rebuilt = await rebuildPlayableCopy({ quiet: true })
+      if (!rebuilt) return
+      text = rebuilt.text
+      key = rebuilt.key || key
+    }
+    if (!text) {
+      setError('There is no playable text to send to the player.')
+      return
+    }
+    onApply?.(text, key)
+  }
+
+  function stopScan() {
+    stopRef.current = true
+    setNotice('Stopping after the page being read…')
+  }
+
+  const pageCount = docInfo?.pageCount || 1
+  const hasResults = Boolean(result?.pageResults?.length)
 
   return (
-    <section className="scanner">
-      <header className="scanner-head">
-        <h2>Read a sheet from a picture</h2>
-        <button type="button" className="scanner-close" onClick={reset} aria-label="Close scanner">
-          ×
-        </button>
-      </header>
-
-      <div
-        className={`dropzone${dragging ? ' dragging' : ''}${state === 'working' ? ' busy' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragging(true)
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => state !== 'working' && inputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
-        }}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPT}
-          onChange={(e) => handleFile(e.target.files?.[0])}
-          hidden
-        />
-        {preview && <img className="dropzone-preview" src={preview} alt="Uploaded sheet" />}
-        {state === 'working' ? (
-          <div className="dropzone-body">
-            <div className="spinner" aria-hidden="true" />
-            <p>{progress}</p>
-            <p className="muted">First scan loads the OCR engine.</p>
-          </div>
-        ) : (
-          <div className="dropzone-body">
-            <div className="dropzone-icon" aria-hidden="true" />
-            <p>
-              <strong>Drop a screenshot or PDF here</strong>
+    <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Sheet scanner">
+      <section className="scanner">
+        <header className="scanner-head">
+          <div>
+            <h2>Scan a tonic solfa sheet</h2>
+            <p className="scanner-subtitle">
+              Read the printed notation as editable text. Recognition happens on this
+              device; nothing is uploaded.
             </p>
-            <p className="muted">or click to choose a file · PNG, JPG or PDF</p>
+          </div>
+          <button
+            type="button"
+            className="scanner-close"
+            onClick={() => onClose?.()}
+            aria-label="Close scanner"
+          >
+            ×
+          </button>
+        </header>
+
+        {notice && <p className="scanner-notice">{notice}</p>}
+        {error && !doc && (
+          <p className="scanner-error" role="alert">
+            {error}
+          </p>
+        )}
+
+        {!doc ? (
+          loading ? (
+            <div className="dropzone busy">
+              <div className="dropzone-body">
+                <div className="spinner" aria-hidden="true" />
+                <p>{progress || 'Opening the document…'}</p>
+                <p className="muted">The OCR engine loads only when you scan.</p>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="dropzone"
+              onDragOver={(event) => {
+                event.preventDefault()
+                event.currentTarget.classList.add('dragging')
+              }}
+              onDragLeave={(event) => event.currentTarget.classList.remove('dragging')}
+              onDrop={(event) => {
+                event.preventDefault()
+                event.currentTarget.classList.remove('dragging')
+                loadFile(event.dataTransfer.files?.[0])
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') fileInputRef.current?.click()
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="dropzone-body">
+                <div className="dropzone-icon" aria-hidden="true" />
+                <p>
+                  <strong>Drop a photo, screenshot or PDF here</strong>
+                </p>
+                <p className="muted">
+                  JPG, PNG, WebP, BMP or PDF · multi-page PDFs supported
+                </p>
+                <div
+                  className="dropzone-actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Choose file
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => cameraInputRef.current?.click()}
+                  >
+                    Take photo
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        ) : (
+          <div className="scanner-body">
+            <div className="scanner-filebar">
+              <span className="scanner-file-name" title={docInfo?.name}>
+                {docInfo?.name}
+              </span>
+              <span className="tag">{docInfo?.kind === 'pdf' ? 'PDF' : 'image'}</span>
+              <span className="tag">
+                {pageCount} page{pageCount === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="scanner-split">
+              <DocumentViewer
+                preview={preview}
+                previewBusy={previewBusy || loading}
+                pageIndex={pageIndex}
+                pageCount={pageCount}
+                onPageChange={changePage}
+                rotation={rotation}
+                onRotate={rotate}
+                zoom={zoom}
+                onZoom={(value) => setZoom(Math.min(3, Math.max(0.5, value)))}
+                selectMode={selectMode}
+                onSelectModeChange={(next) => {
+                  setSelectMode(next)
+                  if (!next) setSelection(null)
+                }}
+                selection={selection}
+                onSelectionChange={setSelection}
+                onScanPage={() => applyPages([pageIndex])}
+                onScanAll={() => applyPages([...Array(pageCount).keys()])}
+                onScanRegion={scanSelectedRegion}
+                onStopScan={stopScan}
+                scanning={scanning}
+                progress={progress}
+                onClearDocument={closeDocument}
+                enhance={enhance}
+                onEnhanceChange={setEnhance}
+                denoise={denoise}
+                onDenoiseChange={setDenoise}
+                docKind={docInfo?.kind}
+                hasResults={hasResults}
+              />
+
+              <ScanResults
+                result={result}
+                activePage={activePage}
+                pageCount={pageCount}
+                onPageChange={changePage}
+                onExactChange={updateExact}
+                playableText={playableText}
+                onPlayableChange={setPlayableText}
+                onRebuild={() => rebuildPlayableCopy()}
+                onUse={useInPlayer}
+                onRescanPage={() => applyPages([pageIndex])}
+                onRescanAll={() => applyPages([...Array(pageCount).keys()])}
+                onScanUnscannedPage={() => applyPages([pageIndex])}
+                exactDirty={exactDirty}
+                region={region}
+                onInsertRegion={(text) => mergeRegionText(text, 'insert')}
+                onReplaceRegion={(text) => mergeRegionText(text, 'replace')}
+                onDismissRegion={() => setRegion(null)}
+                error={doc ? error : null}
+                scanning={scanning}
+              />
+            </div>
           </div>
         )}
-      </div>
 
-      {error && (
-        <p className="scanner-error" role="alert">
-          {error}
+        <p className="scanner-note">
+          Recognition is never perfect. The exact pane keeps printed letters, punctuation,
+          part rows, lyrics and headers unmodified; the playable pane is a separate derived
+          copy. Low-confidence tokens are flagged, not guessed. Nothing leaves your device.
+          For best results use a straight 300 DPI scan or the original PDF.
         </p>
-      )}
 
-      {result && (
-        <div className="scanner-result">
-          <div className="scanner-meta">
-            <span className={result.confidence >= 75 ? 'tag good' : 'tag warn'}>
-              {Math.round(result.confidence)}% confident
-            </span>
-            <span className="tag">{result.pages} page{result.pages === 1 ? '' : 's'}</span>
-            <span className="tag">{result.lineCount} line{result.lineCount === 1 ? '' : 's'}</span>
-            {result.key && <span className="tag">key {result.key}</span>}
-            <span className={timed || mode === 'hymnal' || mode === 'text' ? 'tag good' : 'tag'}>
-              {modeLabel}
-            </span>
-            {mode === 'hymnal' && result.bars > 0 && (
-              <span className="tag">
-                {result.bars} bar{result.bars === 1 ? '' : 's'}
-              </span>
-            )}
-            {result.unmatchedNotes > 0 && (
-              <span className="tag warn">{result.unmatchedNotes} note{result.unmatchedNotes === 1 ? '' : 's'} unmatched</span>
-            )}
-            {noisy && <span className="tag warn">{result.unreadable} unreadable</span>}
-          </div>
-
-          <div className="scanner-panes">
-            <div className="scanner-pane">
-              <div className="scanner-pane-head">
-                <label className="scanner-preview-label" htmlFor="scanner-source-text">
-                  Exact transcription
-                </label>
-                <span className="tag">{sourceKindLabel}</span>
-              </div>
-              <p className="scanner-pane-note">{sourceNote}</p>
-              <textarea
-                id="scanner-source-text"
-                className="scanner-text"
-                value={sourceText}
-                onChange={(e) => {
-                  setCopied(false)
-                  setResult({ ...result, sourceText: e.target.value })
-                }}
-                rows={Math.min(16, Math.max(6, sourceLineCount + 1))}
-                spellCheck={false}
-              />
-              <div className="scanner-actions">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={copySource}
-                  disabled={!sourceText}
-                >
-                  {copied ? 'Copied' : 'Copy exact text'}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={downloadSource}
-                  disabled={!sourceText}
-                >
-                  Download .txt
-                </button>
-              </div>
-            </div>
-
-            <div className="scanner-pane">
-              <div className="scanner-pane-head">
-                <label className="scanner-preview-label" htmlFor="scanner-text">
-                  Playable interpretation
-                </label>
-                <span className="tag">converted</span>
-              </div>
-              <p className="scanner-pane-note">
-                This is the converted text that will be used for playback.
-              </p>
-
-              {warnings.map((warning) => (
-                <p className="scanner-warn" key={warning}>
-                  {warning}
-                </p>
-              ))}
-
-              {(lowConfidence || noisy || result.unmatchedNotes > 0) && (
-                <p className="scanner-warn">
-                  Music recognition is never perfect. Read the notes below against your
-                  original and correct anything wrong before playing.
-                </p>
-              )}
-
-              <textarea
-                id="scanner-text"
-                className="scanner-text"
-                value={result.text}
-                onChange={(e) => setResult({ ...result, text: e.target.value })}
-                rows={Math.min(10, Math.max(3, result.lineCount + 1))}
-                spellCheck={false}
-              />
-
-              <div className="scanner-actions">
-                <button type="button" className="btn btn-primary" onClick={apply}>
-                  Use playable notes
-                </button>
-                <button type="button" className="btn" onClick={reset}>
-                  Discard
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <p className="scanner-note">
-        The exact pane keeps the printed note letters, symbols, headers and lyrics
-        unmodified. The playable pane converts a copy into tonic solfa for playback.
-        Four-part hymn sheets are read voice by voice from their S A T B rows and
-        barlines; use the original PDF or a clean 300 DPI scan. Solfa printed under
-        a five-line staff still supplies note lengths for the playable copy.
-      </p>
-    </section>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPT}
+          onChange={(event) => {
+            loadFile(event.target.files?.[0])
+            event.target.value = ''
+          }}
+          hidden
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(event) => {
+            loadFile(event.target.files?.[0])
+            event.target.value = ''
+          }}
+          hidden
+        />
+      </section>
+    </div>
   )
 }

@@ -231,5 +231,6 @@ export function pagesToRhythmSolfa(pages = []) {
     matched,
     unmatchedNotes: unmatched,
     timed: true,
+    parts,
   }
 }

@@ -1096,6 +1096,7 @@ export default function App() {
           </div>
           {showScanner && (
             <SheetScanner
+              onClose={() => setShowScanner(false)}
               onApply={(scanned, scannedKey) => {
                 setText(scanned)
                 if (scannedKey) setUiKey(scannedKey)
