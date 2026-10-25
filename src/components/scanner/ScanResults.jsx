@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { notesOnly } from '../../lib/scan/notesOnly.js'
+import {
+  visibleExactPages,
+  visibleExactText,
+  visibleLineCount,
+} from '../../lib/scan/visibleExact.js'
 
 async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {
@@ -49,7 +53,16 @@ function modeLabel(result) {
   return 'solfa text'
 }
 
-function sourceNote(result) {
+function sourceNote(result, fullExact) {
+  if (fullExact) {
+    if (result?.sourceKind === 'pdf-text-layer') {
+      return 'Text comes from the PDF text layer. Symbols, spacing and wording are not normalized.'
+    }
+    if (result?.sourceKind === 'layout') {
+      return 'Raw OCR arranged by its printed rows and barlines. Symbols and wording are not normalized.'
+    }
+    return 'Raw OCR words in reading order. Symbols and wording are not normalized.'
+  }
   const notes = 'Only solfa note lines are kept; headings, lyrics, key lines and part labels are hidden.'
   if (result?.sourceKind === 'pdf-text-layer') {
     return `Notes come from the PDF text layer. ${notes}`
@@ -60,8 +73,18 @@ function sourceNote(result) {
   return `Notes come from the page in reading order. ${notes}`
 }
 
-function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, onDismiss }) {
+function RegionPanel({
+  region,
+  copied,
+  scanning,
+  onInsert,
+  onReplace,
+  onCopy,
+  onDismiss,
+  fullExact,
+}) {
   const [draft, setDraft] = useState(region.text || '')
+  const textNoun = fullExact ? 'text' : 'notes'
 
   return (
     <div className="scanner-region-panel">
@@ -75,7 +98,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
         onChange={(event) => setDraft(event.target.value)}
         rows={Math.min(12, Math.max(4, draft.split('\n').length + 1))}
         spellCheck={false}
-        aria-label="Recognized notes from the selected region"
+        aria-label={`Recognized ${textNoun} from the selected region`}
       />
       <div className="scanner-actions">
         <button
@@ -84,7 +107,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
           onClick={() => onInsert(draft)}
           disabled={!draft.trim() || scanning}
         >
-          Insert into notes
+          Insert into {fullExact ? 'page' : 'notes'}
         </button>
         <button
           type="button"
@@ -92,7 +115,7 @@ function RegionPanel({ region, copied, scanning, onInsert, onReplace, onCopy, on
           onClick={() => onReplace(draft)}
           disabled={!draft.trim() || scanning}
         >
-          Replace page notes
+          Replace page {textNoun}
         </button>
         <button
           type="button"
@@ -159,6 +182,7 @@ export default function ScanResults({
   error,
   scanning,
   pageCount,
+  docKind,
 }) {
   const [copied, setCopied] = useState('')
   const copyTimer = useRef(0)
@@ -167,12 +191,13 @@ export default function ScanResults({
 
   useEffect(() => () => clearTimeout(copyTimer.current), [])
 
+  const fullExact = docKind === 'pdf'
+  const transcriptLabel = fullExact ? 'Exact transcription' : 'Notes only'
+  const textNoun = fullExact ? 'text' : 'notes'
   const page = result?.pageResults?.find((entry) => entry.pageNumber === activePage) || null
-  const allExact = (result?.pageResults || [])
-    .map((entry) => notesOnly(entry.exactText))
-    .filter(Boolean)
-    .join('\n\n')
-  const exact = notesOnly(page?.exactText || '')
+  const allExact = visibleExactPages(result?.pageResults, fullExact)
+  const exact = visibleExactText(page?.exactText, fullExact)
+  const exactLineCount = visibleLineCount(allExact)
   const uncertain = page?.uncertainty || []
   const warnings = result?.warnings || []
   const key = result?.key
@@ -215,15 +240,21 @@ export default function ScanResults({
 
       {!result ? (
         <div className="scanner-empty">
-          <h3>Recognized notes will appear here</h3>
+          <h3>{fullExact ? 'Recognized text will appear here' : 'Recognized notes will appear here'}</h3>
           <p>
-            Choose a page, then press <b>Scan this page</b>. Only solfa note lines are
-            kept; the original stays visible so you can check every symbol.
+            Choose a page, then press <b>Scan this page</b>.{' '}
+            {fullExact
+              ? 'The complete printed text stays visible so you can check every line.'
+              : 'Only solfa note lines are kept; the original stays visible so you can check every symbol.'}
           </p>
           <ul>
-            <li>Nothing is uploaded; OCR runs on this device.</li>
-            <li>Unclear notes are flagged instead of guessed.</li>
-            <li>Lyrics, headings, key lines and part labels are hidden.</li>
+            <li>Nothing is uploaded; recognition runs on this device.</li>
+            <li>{fullExact ? 'Unclear words are' : 'Unclear notes are'} flagged instead of guessed.</li>
+            <li>
+              {fullExact
+                ? 'Every printed line stays editable; the playable copy is separate.'
+                : 'Lyrics, headings, key lines and part labels are hidden.'}
+            </li>
           </ul>
         </div>
       ) : (
@@ -236,7 +267,7 @@ export default function ScanResults({
               {result.pages} page{result.pages === 1 ? '' : 's'}
             </span>
             <span className="tag">
-              {result.lineCount} line{result.lineCount === 1 ? '' : 's'}
+              {exactLineCount} line{exactLineCount === 1 ? '' : 's'}
             </span>
             {key && <span className="tag">key {key}</span>}
             <span className={result.mode === 'hymnal' ? 'tag good' : 'tag'}>
@@ -308,7 +339,7 @@ export default function ScanResults({
             <>
               <div className="scanner-pane-head">
                 <label className="scanner-preview-label" htmlFor="scanner-source-text">
-                  Notes only · page {activePage}
+                  {transcriptLabel} · page {activePage}
                 </label>
                 <span className="tag">
                   {page.sourceKind === 'layout'
@@ -318,7 +349,7 @@ export default function ScanResults({
                       : 'raw OCR'}
                 </span>
               </div>
-              <p className="scanner-pane-note">{sourceNote(page)}</p>
+              <p className="scanner-pane-note">{sourceNote(page, fullExact)}</p>
               <textarea
                 id="scanner-source-text"
                 ref={exactRef}
@@ -328,7 +359,7 @@ export default function ScanResults({
                 rows={Math.min(20, Math.max(8, exact.split('\n').length + 2))}
                 spellCheck={false}
                 disabled={scanning}
-                aria-label={`Notes only for page ${activePage}`}
+                aria-label={`${transcriptLabel} for page ${activePage}`}
               />
               <div className="scanner-actions">
                 <button
@@ -337,7 +368,13 @@ export default function ScanResults({
                   onClick={() => copy('exact', allExact)}
                   disabled={!allExact}
                 >
-                  {copied === 'exact' ? 'Copied all notes' : 'Copy notes'}
+                  {copied === 'exact'
+                    ? fullExact
+                      ? 'Copied all text'
+                      : 'Copied all notes'
+                    : fullExact
+                      ? 'Copy text'
+                      : 'Copy notes'}
                 </button>
                 <button type="button" className="btn" onClick={() => selectAll(exactRef)}>
                   Select all
@@ -345,7 +382,12 @@ export default function ScanResults({
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => downloadText(allExact, 'solfa-notes.txt')}
+                  onClick={() =>
+                    downloadText(
+                      allExact,
+                      fullExact ? 'solfa-transcription.txt' : 'solfa-notes.txt'
+                    )
+                  }
                   disabled={!allExact}
                 >
                   Download .txt
@@ -363,15 +405,16 @@ export default function ScanResults({
               <UncertainChips entries={uncertain} onPick={pickUncertain} />
 
               {region && (
-                    <RegionPanel
-                      key={`${region.text || ''}|${region.confidence}`}
-                      region={region}
-                      copied={copied === 'region'}
-                      scanning={scanning}
-                      onInsert={onInsertRegion}
+                <RegionPanel
+                  key={`${region.text || ''}|${region.confidence}`}
+                  region={region}
+                  copied={copied === 'region'}
+                  scanning={scanning}
+                  onInsert={onInsertRegion}
                   onReplace={onReplaceRegion}
                   onCopy={(text) => copy('region', text)}
                   onDismiss={onDismissRegion}
+                  fullExact={fullExact}
                 />
               )}
 
@@ -383,7 +426,7 @@ export default function ScanResults({
                   <span className="tag">derived · editable</span>
                 </div>
                 <p className="scanner-pane-note">
-                  This is the copy the player will receive. Edit the notes above
+                  This is the copy the player will receive. Edit the {textNoun} above
                   and rebuild if recognition needs correcting.
                 </p>
                 <textarea
@@ -399,8 +442,8 @@ export default function ScanResults({
                 />
                 {exactDirty && (
                   <p className="scanner-warn">
-                    The notes changed. Rebuild the playable copy so your corrections
-                    are the ones that play.
+                    The {textNoun} changed. Rebuild the playable copy so your
+                    corrections are the ones that play.
                   </p>
                 )}
                 <div className="scanner-actions">

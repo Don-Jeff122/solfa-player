@@ -240,8 +240,9 @@ export default function SheetScanner({ onApply, onClose }) {
       setActivePage(pageNumber)
     }
     setRegion(null)
+    const target = docInfo?.kind === 'pdf' ? 'page text' : 'page notes'
     setNotice(
-      `Region ${mode === 'replace' ? 'replaced' : 'added to'} the page notes. Rebuild the playable copy when you are ready.`
+      `Region ${mode === 'replace' ? 'replaced' : 'added to'} the ${target}. Rebuild the playable copy when you are ready.`
     )
   }
 
@@ -328,19 +329,27 @@ export default function SheetScanner({ onApply, onClose }) {
         denoise,
         onProgress: setProgress,
       })
-      const text = notesOnly(found.text)
+      const fullExact = docInfo?.kind === 'pdf'
+      const text = fullExact ? String(found.text || '').trim() : notesOnly(found.text)
       const region = {
         ...found,
         text,
         ok: Boolean(text),
-        error: text ? null : found.error || 'No solfa note lines were found in the region.',
+        error: text
+          ? null
+          : found.error ||
+            (fullExact
+              ? 'No text was found in the region.'
+              : 'No solfa note lines were found in the region.'),
       }
       setRegion(region)
       setSelectMode(false)
       if (!region.ok) setError(region.error)
       else {
         setNotice(
-          'Region read. Check the notes, then insert them into the page or replace the page notes.'
+          fullExact
+            ? 'Region read. Check the text, then insert it into the page or replace the page text.'
+            : 'Region read. Check the notes, then insert them into the page or replace the page notes.'
         )
       }
     } catch (reason) {
@@ -353,20 +362,30 @@ export default function SheetScanner({ onApply, onClose }) {
 
   async function rebuildPlayableCopy({ quiet = false } = {}) {
     const text = allExactText()
+    const fullExact = docInfo?.kind === 'pdf'
     if (!text.trim()) {
-      setError('The notes are empty.')
+      setError(fullExact ? 'The exact text is empty.' : 'The notes are empty.')
       return null
     }
     const { rebuildPlayable } = await import('../lib/scan/scanService.js')
     const rebuilt = rebuildPlayable(text)
     if (!rebuilt.ok) {
-      setError(rebuilt.error || 'The corrected notes could not be read.')
+      setError(
+        rebuilt.error ||
+          (fullExact
+            ? 'The corrected text could not be read.'
+            : 'The corrected notes could not be read.')
+      )
       return null
     }
     setPlayableText(rebuilt.text)
     setExactDirty(false)
     setError(null)
-    if (!quiet) setNotice('Playable copy rebuilt from your corrected notes.')
+    if (!quiet) {
+      setNotice(
+        `Playable copy rebuilt from your corrected ${fullExact ? 'text' : 'notes'}.`
+      )
+    }
     setResult((current) => {
       if (!current) return current
       return {
@@ -560,17 +579,18 @@ export default function SheetScanner({ onApply, onClose }) {
                 onDismissRegion={() => setRegion(null)}
                 error={doc ? error : null}
                 scanning={scanning}
+                docKind={docInfo?.kind}
               />
             </div>
           </div>
         )}
 
         <p className="scanner-note">
-          Recognition is never perfect. The notes pane keeps printed note symbols, barlines
-          and rhythm marks; headings, lyrics, key lines and part labels are hidden. The
-          playable pane is a separate derived copy. Low-confidence tokens are flagged, not
-          guessed. Nothing leaves your device. For best results use a straight 300 DPI scan
-          or the original PDF.
+          Recognition is never perfect. PDFs keep the complete exact text, including printed
+          headers, lyrics and part labels; images show only solfa note lines, barlines and
+          rhythm marks. The playable pane is a separate derived copy. Low-confidence tokens
+          are flagged, not guessed. Nothing leaves your device. For best results use a
+          straight 300 DPI scan or the original PDF.
         </p>
 
         <input
