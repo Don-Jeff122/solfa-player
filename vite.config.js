@@ -15,7 +15,7 @@ export default defineConfig({
         name: 'Solfa Piano',
         short_name: 'Solfa',
         description:
-          'Type tonic solfa and hear it played on a piano. Supports keys, parts (bass/tenor/alto/soprano), durations, WAV recording and offline score scanning.',
+          'Type tonic solfa and hear it played on a piano. Supports keys, parts (bass/tenor/alto/soprano), durations, WAV recording and offline playback.',
         theme_color: '#0b1122',
         background_color: '#0b1122',
         display: 'standalone',
@@ -34,13 +34,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Precache the app shell and the bundled OCR assets so the whole app
-        // (including the sheet scanner) works with no network connection.
-        globPatterns: [
-          '**/*.{js,mjs,css,html,svg,png,ico,wasm,gz,traineddata}',
-        ],
-        // tesseract-core-lstm.wasm.js is ~3.8 MB and eng.traineddata.gz ~2.9 MB.
-        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        // Precache the app shell so playback and saved sheets work offline.
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico}'],
         cleanupOutdatedCaches: true,
       },
     }),

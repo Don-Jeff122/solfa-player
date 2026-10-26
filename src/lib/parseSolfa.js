@@ -274,8 +274,8 @@ export function parseSolfa(text) {
           if (!bar.endings.includes(ev.n)) bar.endings.push(ev.n)
           if (bar.line == null) bar.line = lineNo
         } else {
-          // The scanner already joined slurred notes, so the group id rides on
-          // the note event.
+          // The hymnal line parser already joined slurred notes, so the group
+          // id rides on the note event.
           pushNote({
             token: ev.token,
             solfa: ev.solfa,

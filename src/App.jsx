@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
 import Piano from './components/Piano.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
-import SheetScanner from './components/SheetScanner.jsx'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -141,7 +140,6 @@ export default function App() {
   const [partSel, setPartSel] = useState(null)
   const [tempo, setTempo] = useState(90)
   const [octave, setOctave] = useState(0)
-  const [showScanner, setShowScanner] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeMidi, setActiveMidi] = useState(() => new Set())
   const [noteIndexes, setNoteIndexes] = useState([])
@@ -1076,13 +1074,6 @@ export default function App() {
             <div className="head-actions">
               <button
                 type="button"
-                className={`btn btn-small${showScanner ? ' active' : ''}`}
-                onClick={() => setShowScanner((v) => !v)}
-              >
-                Scan image / PDF
-              </button>
-              <button
-                type="button"
                 className="btn btn-small"
                 onClick={() => {
                   setText(DEFAULT_TEXT)
@@ -1094,18 +1085,6 @@ export default function App() {
               </button>
             </div>
           </div>
-          {showScanner && (
-            <SheetScanner
-              onClose={() => setShowScanner(false)}
-              onApply={(scanned, scannedKey) => {
-                setText(scanned)
-                if (scannedKey) setUiKey(scannedKey)
-                setError(null)
-                setSavedMsg(null)
-                setShowScanner(false)
-              }}
-            />
-          )}
           <textarea
             className="solfa-input"
             value={text}

@@ -3,8 +3,7 @@
 Type tonic solfa and hear it played. Supports Ghanaian hymnal notation,
 multiple parts (Soprano/Alto/Tenor/Bass), `Doh = X` keys, chromatic syllables
 (`fe` = raised fa, a lone `e` = raised tonic), holds, slurs (underscored notes
-sung to one syllable and played legato), ties and repeats, plus WAV recording
-and OCR of printed solfa sheets.
+sung to one syllable and played legato), ties and repeats, plus WAV recording.
 
 Live at <https://don-jeff122.github.io/solfa-player/>.
 
@@ -16,8 +15,6 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
 - On-screen piano keyboard, voice / sustain / tempo controls
 - Playback through a dependency-free Web Audio synth (no samples)
 - Record and download a WAV of the playback
-- Scan a printed page or PDF with Tesseract (loaded on demand) and turn it
-  into playable solfa
 - Sheets persist in the browser (`localStorage`); a fresh browser is seeded
   with the built-in "Abide with Me" sample
 
@@ -43,24 +40,14 @@ Pages subpath.
 
 The build is a Progressive Web App: open the deployed site once and install it
 (Add to Home Screen / install icon in the address bar). A service worker
-(`vite-plugin-pwa` + Workbox) precaches the whole app shell plus the OCR engine,
-so playback, saved sheets and the sheet scanner all work with no connection.
-
-The OCR engine is bundled locally under `public/tesseract/` (Tesseract worker,
-LSTM core and `eng` language data), so scanning never calls a CDN:
-
-- `public/tesseract/worker/worker.min.js`: Tesseract web worker
-- `public/tesseract/core/tesseract-core-lstm.wasm.js`: SIMD-free LSTM core
-  (wasm embedded, works on every WebAssembly browser)
-- `public/tesseract/lang/eng.traineddata.gz`: English language data
+(`vite-plugin-pwa` + Workbox) precaches the app shell so playback and saved
+sheets work with no connection.
 
 ## Layout
 
 - `src/lib/parseSolfa.js`: solfa text → parsed notes/parts
-- `src/lib/hymnal.js`: scanners for printed hymnal sheets (`d : d | m : -`,
+- `src/lib/hymnal.js`: parser for Ghanaian hymnal notation (`d : d | m : -`,
   `S:` part rows, `Doh = A` headers)
 - `src/audio/Synth.js`, `src/audio/voices.js`: Web Audio synthesizer and
   instrument presets (all plain data, fully unit-tested)
-- `src/components/`: piano, controls, saved sheets, sheet scanner
-- `src/lib/ocr.js`, `src/lib/ocrService.js`: Tesseract OCR + PDF handling,
-  loaded lazily when the scanner opens
+- `src/components/`: piano, controls and saved sheets

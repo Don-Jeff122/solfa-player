@@ -12,9 +12,6 @@ dist
 dist-ssr
 *.local
 
-# Stray uncompressed OCR data (the app bundles public/tesseract/lang/*.traineddata.gz)
-eng.traineddata
-
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
