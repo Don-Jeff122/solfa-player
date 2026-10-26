@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
 import Piano from './components/Piano.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
+import SolfaScanner from './components/SolfaScanner.jsx'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -171,6 +172,7 @@ export default function App() {
   const [position, setPosition] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
   const [textFocused, setTextFocused] = useState(false)
+  const [scannerOpen, setScannerOpen] = useState(false)
   const ring = sustainSeconds(sustain)
 
   const [synth] = useState(() => new Synth())
@@ -1065,6 +1067,13 @@ export default function App() {
             Type tonic solfa, or a full sheet with parts, and hear it on the piano.
           </p>
         </div>
+        <button
+          type="button"
+          className="btn scan-launch"
+          onClick={() => setScannerOpen(true)}
+        >
+          Scan Solfa
+        </button>
       </header>
 
       <div className="layout">
@@ -1396,6 +1405,16 @@ export default function App() {
           </p>
         </section>
       </div>
+      <SolfaScanner
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onUseText={(scannedText) => {
+          setText(scannedText)
+          setError(null)
+          setVoiceOctaves({})
+          setSavedMsg('Loaded scanned text. Review uncertain characters before playing.')
+        }}
+      />
       <audio
         ref={audioRef}
         className="bg-audio"

@@ -12,6 +12,15 @@ dist
 dist-ssr
 *.local
 
+# Python scanner backend
+backend/.venv/
+backend/.data/
+backend/.env
+backend/model-smoke.png
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
