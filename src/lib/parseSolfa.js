@@ -30,13 +30,22 @@ function keyFromHeader(line) {
   if (m) return m[1] + (m[2] ? KEY_WORD_SUFFIX[m[2].toLowerCase()] : '')
   return null
 }
+
+function meterFromHeader(line) {
+  let m = line.match(METER_NAMED_RE) || line.match(METER_BARE_RE)
+  if (!m && keyFromHeader(line) != null) m = line.match(METER_INLINE_RE)
+  if (m) return { num: Number(m[1]), den: Number(m[2]) }
+  if (COMMON_TIME_RE.test(line)) return { num: 4, den: 4 }
+  return null
+}
 const NOTE_TOKEN_RE =
   /^(,*)(sol|so|do|re|mi|fa|la|ti|di|ri|fi|si|li|ra|me|se|le|te|[dDmMrRfFtTsSlL])(['’,]*)(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/i
 const REST_WORD_RE = /^rest(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/i
 const REST_ZERO_RE = /^0(-+|\(\d{1,3}(?:\/\d{1,3})?\))?$/
 
 // Meter headers: "Meter: 4/4", "Time 6/8", a lone "4/4", or C for common time.
-const METER_NAMED_RE = /^\s*(?:meter|time)\s*[:=]?\s*([1-9]\d*)\s*\/\s*([1-9]\d*)\s*$/i
+const METER_NAMED_RE = /^\s*(?:meter|metre|time)\s*[:=]?\s*([1-9]\d*)\s*\/\s*([1-9]\d*)\s*$/i
+const METER_INLINE_RE = /(?:meter|metre|time)\s*[:=]?\s*([1-9]\d*)\s*\/\s*([1-9]\d*)/i
 const METER_BARE_RE = /^\s*([1-9]\d*)\s*\/\s*([1-9]\d*)\s*$/
 const COMMON_TIME_RE = /^\s*(?:C|c|C\|)\s*$/
 
@@ -82,7 +91,7 @@ const structural = (bar) =>
 
 const partSkeleton = (p) => p.bars.map(structural).join('|')
 
-export function parseSolfa(text) {
+export function parseSolfa(text, { allowIncompleteRepeats = false } = {}) {
   const lines = String(text ?? '').split(/\r?\n/)
   let key = null
   let meter = null
@@ -131,8 +140,7 @@ export function parseSolfa(text) {
   for (const candidate of lines) {
     const line = candidate.trim()
     if (!line) continue
-    if (keyFromHeader(line) != null) continue
-    if (line.match(METER_NAMED_RE) || line.match(METER_BARE_RE) || COMMON_TIME_RE.test(line)) continue
+    if (keyFromHeader(line) != null || meterFromHeader(line) != null) continue
     if (line.match(PART_KEYWORD_RE) || line.match(CUSTOM_PART_RE)) continue
     if (looksHymnal(line)) {
       hymnal = true
@@ -150,22 +158,17 @@ export function parseSolfa(text) {
       if (!rawLine) continue
 
       const keyHeader = keyFromHeader(rawLine)
-      if (keyHeader != null) {
-        if (keyToSemitones(keyHeader) == null) {
-          return fail(
-            `Unrecognized key "${keyHeader}" on line ${lineNo}. Use a note name like C, D#, or Bb.`
-          )
+      const headerMeter = meterFromHeader(rawLine)
+      if (keyHeader != null || headerMeter) {
+        if (keyHeader != null) {
+          if (keyToSemitones(keyHeader) == null) {
+            return fail(
+              `Unrecognized key "${keyHeader}" on line ${lineNo}. Use a note name like C, D#, or Bb.`
+            )
+          }
+          key = normalizeKey(keyHeader)
         }
-        key = normalizeKey(keyHeader)
-        continue
-      }
-      const meterMatch = rawLine.match(METER_NAMED_RE) || rawLine.match(METER_BARE_RE)
-      if (meterMatch) {
-        meter = { num: Number(meterMatch[1]), den: Number(meterMatch[2]) }
-        continue
-      }
-      if (COMMON_TIME_RE.test(rawLine)) {
-        meter = { num: 4, den: 4 }
+        if (headerMeter) meter = headerMeter
         continue
       }
       if (PART_KEYWORD_RE.test(rawLine)) {
@@ -302,23 +305,17 @@ export function parseSolfa(text) {
     if (!line) continue
 
     const keyHeader = keyFromHeader(line)
-    if (keyHeader != null) {
-      if (keyToSemitones(keyHeader) == null) {
-        return fail(
-          `Unrecognized key "${keyHeader}" on line ${lineNo}. Use a note name like C, D#, or Bb.`
-        )
+    const headerMeter = meterFromHeader(line)
+    if (keyHeader != null || headerMeter) {
+      if (keyHeader != null) {
+        if (keyToSemitones(keyHeader) == null) {
+          return fail(
+            `Unrecognized key "${keyHeader}" on line ${lineNo}. Use a note name like C, D#, or Bb.`
+          )
+        }
+        key = normalizeKey(keyHeader)
       }
-      key = normalizeKey(keyHeader)
-      continue
-    }
-
-    const meterMatch = line.match(METER_NAMED_RE) || line.match(METER_BARE_RE)
-    if (meterMatch) {
-      meter = { num: Number(meterMatch[1]), den: Number(meterMatch[2]) }
-      continue
-    }
-    if (COMMON_TIME_RE.test(line)) {
-      meter = { num: 4, den: 4 }
+      if (headerMeter) meter = headerMeter
       continue
     }
 
@@ -580,39 +577,39 @@ export function parseSolfa(text) {
     }
   }
 
-  for (const p of parts) {
-    if (p.bars.length === 0) continue
-    const stack = []
-    let repeats = 0
-    for (let bi = 0; bi < p.bars.length; bi++) {
-      const bar = p.bars[bi]
-      if (bar.openRepeat) {
-        if (stack.length > 0) {
-          return fail(
-            `Nested repeats in ${p.name} (bar ${bi + 1}) aren't supported yet. Use one ${'|:'} ... ${':|'} at a time.`
-          )
+  if (!allowIncompleteRepeats) {
+    for (const p of parts) {
+      if (p.bars.length === 0) continue
+      const stack = []
+      for (let bi = 0; bi < p.bars.length; bi++) {
+        const bar = p.bars[bi]
+        if (bar.openRepeat) {
+          if (stack.length > 0) {
+            return fail(
+              `Nested repeats in ${p.name} (bar ${bi + 1}) aren't supported yet. Use one ${'|:'} ... ${':|'} at a time.`
+            )
+          }
+          stack.push(bi)
         }
-        stack.push(bi)
-        repeats++
+        if (bar.closeRepeat && stack.length > 0) stack.pop()
       }
-      if (bar.closeRepeat && stack.length > 0) stack.pop()
-    }
-    if (stack.length > 0) {
-      return fail(
-        `Unterminated repeat in ${p.name}: the ${'|:'} on bar ${stack[0] + 1} has no closing ${':|'}.`
-      )
-    }
-    const usesEndings = p.bars.some((b) => b.endings.length > 0)
-    if (usesEndings) {
-      const hasRepeat =
-        p.bars.some((b) => b.openRepeat) || p.bars.some((b) => b.closeRepeat)
-      if (!hasRepeat) {
-        return fail(`Endings ("1."/"2.") in ${p.name} need a repeat: wrap them in ${'|:'} ... ${':|'}.`)
+      if (stack.length > 0) {
+        return fail(
+          `Unterminated repeat in ${p.name}: the ${'|:'} on bar ${stack[0] + 1} has no closing ${':|'}.`
+        )
       }
-      const hasOne = p.bars.some((b) => b.endings.includes(1))
-      const hasTwo = p.bars.some((b) => b.endings.includes(2))
-      if (hasTwo && !hasOne) {
-        return fail(`A "2." ending in ${p.name} appears without a "1." ending before it.`)
+      const usesEndings = p.bars.some((b) => b.endings.length > 0)
+      if (usesEndings) {
+        const hasRepeat =
+          p.bars.some((b) => b.openRepeat) || p.bars.some((b) => b.closeRepeat)
+        if (!hasRepeat) {
+          return fail(`Endings ("1."/"2.") in ${p.name} need a repeat: wrap them in ${'|:'} ... ${':|'}.`)
+        }
+        const hasOne = p.bars.some((b) => b.endings.includes(1))
+        const hasTwo = p.bars.some((b) => b.endings.includes(2))
+        if (hasTwo && !hasOne) {
+          return fail(`A "2." ending in ${p.name} appears without a "1." ending before it.`)
+        }
       }
     }
   }

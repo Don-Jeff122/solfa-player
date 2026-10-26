@@ -17,8 +17,9 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
 - Record and download a WAV of the playback
 - Sheets persist in the browser (`localStorage`); a fresh browser is seeded
   with the built-in "Abide with Me" sample
-- Optional layout-aware scan of images and PDFs with editable OCR corrections
-  (requires the local FastAPI backend described below)
+- Optional layout-aware scan of images and PDFs with editable OCR corrections,
+  measure-aligned part review and source-linked notes (requires the local FastAPI
+  backend described below)
 
 ## Getting started
 
@@ -27,6 +28,7 @@ npm install
 npm run dev        # local dev server
 npm run test       # vitest
 npm run lint       # oxlint
+npm run typecheck  # TypeScript score/review layer
 npm run build      # production build -> dist/
 npm run preview    # serve the production build locally
 ```
@@ -37,11 +39,20 @@ npm run preview    # serve the production build locally
 the approximate page layout from PaddleOCR text boxes, and shows the source and
 reconstructed layout side by side plus an editable-text view. Characters can be
 corrected individually, with undo/redo, and the result can be copied or exported
-as TXT or SVG. OCR confidence and uncertain characters stay visible; recognition
-is never presented as guaranteed.
+as TXT or SVG.
 
-The existing frontend is JavaScript/JSX, so the scanner follows that convention
-rather than introducing a TypeScript build.
+The Parts view builds a measure-aligned score from the recognized lines. It
+keeps Soprano, Alto, Tenor and Bass rows separate, infers missing labels from
+vertical order only when the evidence supports it, preserves page/system/measure
+source links, and fills short voices with rests instead of moving notes. Part
+assignments can be corrected with undo/redo. Recognized playable text is sent to
+the existing player; if a line still needs a part or a score error remains, the
+send is blocked instead of silently dropping music. OCR confidence and uncertain
+characters stay visible; recognition is never presented as guaranteed.
+
+The score and review layer is TypeScript (`src/lib/scanScore.ts` and
+`src/components/scanner/MusicReview.tsx`); the rest of the scanner stays JSX.
+`npm run typecheck` checks the typed layer.
 
 ### Backend setup
 
@@ -91,6 +102,12 @@ Remove-Item Env:SOLFA_RUN_OCR_TESTS
 
 - Character boxes are estimated inside OCR line boxes; they are not native
   per-glyph detections.
+- Part names and four-part layouts are not assumed. Unlabelled lines are inferred
+  only from a clear four-row system or a single melody; ambiguous lines stay
+  unassigned and block playback until reviewed.
+- A score error or unreadable music line blocks sending. Short bars are padded
+  with rests; the printed metre is omitted from playback when every bar does not
+  fit it, and a warning explains why.
 - Braces, multi-line stacks and other structural marks are preserved only when
   detected by OCR/rules. Photos with strong perspective are not fully unwarped.
 - Uploads, jobs and corrections live in the backend process and its temporary
@@ -127,6 +144,10 @@ sheets work with no connection.
 - `src/components/`: piano, controls, saved sheets and the scanner overlay
 - `src/lib/scanApi.js`, `src/lib/scanLayout.js`: scanner client and layout/export
   helpers
+- `src/lib/scanScore.ts`: typed part/system/measure score builder, alignment,
+  warnings and canonical player text
+- `src/components/scanner/MusicReview.tsx`: part assignment, source-linked note
+  review and aligned-text preview
 - `backend/app/`: FastAPI routes, temporary scan jobs, image/PDF preprocessing,
   PaddleOCR adapter and solfa layout reconstruction
 - `backend/tests/`: API, layout and opt-in real-OCR tests

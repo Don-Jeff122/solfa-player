@@ -134,6 +134,20 @@ describe('parseSolfa', () => {
     expect(parseSolfa('KEY: g\nDo').result.key).toBe('G')
   })
 
+  it('reads a combined key and metre header on one printed line', () => {
+    const parsed = parseSolfa('Key: G Metre: 4/4\nDo Re Mi Fa')
+    expect(parsed.ok).toBe(true)
+    expect(parsed.result.key).toBe('G')
+    expect(parsed.result.meter).toEqual({ num: 4, den: 4 })
+  })
+
+  it('accepts incomplete repeats only when the scanner asks for them', () => {
+    expect(parseSolfa('|: Do Re').ok).toBe(false)
+    const parsed = parseSolfa('|: Do Re', { allowIncompleteRepeats: true })
+    expect(parsed.ok).toBe(true)
+    expect(parsed.result.parts[0].bars[0].openRepeat).toBe(true)
+  })
+
   it('rejects an unknown key', () => {
     const parsed = parseSolfa('Key: H\nDo')
     expect(parsed.ok).toBe(false)

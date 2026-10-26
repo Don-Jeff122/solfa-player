@@ -22,9 +22,11 @@ import {
   patchPageChar,
   validateScanFile,
 } from '../lib/scanLayout.js'
+import { buildScannedScore } from '../lib/scanScore.ts'
 import CorrectionBar from './scanner/CorrectionBar.jsx'
 import EditablePage from './scanner/EditablePage.jsx'
 import LayoutPage from './scanner/LayoutPage.jsx'
+import MusicReview from './scanner/MusicReview.tsx'
 import ScanUpload from './scanner/ScanUpload.jsx'
 import SourcePreview from './scanner/SourcePreview.jsx'
 
@@ -32,6 +34,7 @@ const MODES = [
   ['compare', 'Compare'],
   ['layout', 'Original layout'],
   ['text', 'Editable text'],
+  ['parts', 'Parts'],
 ]
 
 function asError(err) {
@@ -70,6 +73,8 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
   const [selected, setSelected] = useState(null)
   const [draft, setDraft] = useState('')
   const [history, setHistory] = useState({})
+  const [partOverrides, setPartOverrides] = useState({})
+  const [partHistory, setPartHistory] = useState({ undo: [], redo: [] })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
@@ -115,6 +120,26 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
     (count, page) => count + countUncertain(page),
     0
   )
+  const scoreState = useMemo(() => {
+    if (!hasResults) return { score: null, error: null }
+    try {
+      return {
+        score: buildScannedScore(pageResults, { partOverrides }),
+        error: null,
+      }
+    } catch (err) {
+      return { score: null, error: asError(err) }
+    }
+  }, [hasResults, pageResults, partOverrides])
+  const score = scoreState.score
+  const selectedEventId = useMemo(() => {
+    if (!score || !selected) return null
+    return (
+      score.events.find(
+        (event) => event.page === selected.page && event.source?.charIds.includes(selected.charId)
+      )?.id || null
+    )
+  }, [score, selected])
 
   useEffect(() => {
     if (!open) return undefined
@@ -153,6 +178,16 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
     const timer = setTimeout(() => setNotice(null), 5000)
     return () => clearTimeout(timer)
   }, [notice])
+
+  useEffect(() => {
+    if (!open || !error) return undefined
+    const timer = setTimeout(() => {
+      dialogRef.current
+        ?.querySelector('.scan-error')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 40)
+    return () => clearTimeout(timer)
+  }, [error, open])
 
   useEffect(() => {
     if (!open) return undefined
@@ -253,6 +288,8 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
     setStatus(null)
     setPageResults({})
     setHistory({})
+    setPartOverrides({})
+    setPartHistory({ undo: [], redo: [] })
     setSelected(null)
     setDraft('')
     setPageNumber(1)
@@ -320,6 +357,8 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
       const next = await startDocumentScan(doc.id, pages)
       setPageResults({})
       setHistory({})
+      setPartOverrides({})
+      setPartHistory({ undo: [], redo: [] })
       setSelected(null)
       setDraft('')
       setStatus(next)
@@ -424,6 +463,58 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
     setNotice(direction === 'undo' ? 'Correction undone.' : 'Correction redone.')
   }
 
+  const assignPart = (lineId, value) => {
+    const hasOverride = Object.prototype.hasOwnProperty.call(partOverrides, lineId)
+    const from = hasOverride ? partOverrides[lineId] : undefined
+    if (from === value) return
+    setPartOverrides((previous) => {
+      const next = { ...previous }
+      if (value === undefined) delete next[lineId]
+      else next[lineId] = value
+      return next
+    })
+    setPartHistory((previous) => ({
+      undo: [...previous.undo, { lineId, from, to: value }],
+      redo: [],
+    }))
+    setError(null)
+  }
+
+  const movePartHistory = (direction) => {
+    const source = direction === 'undo' ? partHistory.undo : partHistory.redo
+    const entry = source[source.length - 1]
+    if (!entry) return
+    const value = direction === 'undo' ? entry.from : entry.to
+    setPartOverrides((previous) => {
+      const next = { ...previous }
+      if (value === undefined) delete next[entry.lineId]
+      else next[entry.lineId] = value
+      return next
+    })
+    setPartHistory((previous) => {
+      if (direction === 'undo') {
+        return {
+          undo: previous.undo.slice(0, -1),
+          redo: [...previous.redo, entry],
+        }
+      }
+      return {
+        undo: [...previous.undo, entry],
+        redo: previous.redo.slice(0, -1),
+      }
+    })
+  }
+
+  const selectScoreEvent = (event) => {
+    const charId = event.source?.charIds?.[0]
+    if (!charId) return
+    if (event.page !== pageNumber) setPageNumber(event.page)
+    const info = findChar(pageResults[event.page], charId)
+    setSelected({ page: event.page, charId })
+    setDraft(info?.char.text || '')
+    setError(null)
+  }
+
   const handleCopy = async () => {
     if (!hasResults) return
     try {
@@ -459,12 +550,47 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
   }
 
   const handleUseText = () => {
-    const text = pagesToPlayerText(pageResults)
-    if (!text.trim()) {
+    if (scoreState.error) {
+      setMode('parts')
+      setError(scoreState.error)
+      return
+    }
+    if (score?.stats.unassignedLines) {
+      setMode('parts')
+      setError({
+        message: 'Assign every recognized music line before sending the score.',
+        hint: 'Open the Parts tab, then choose Soprano, Alto, Tenor, Bass or Main for each line.',
+      })
+      return
+    }
+    const scoreErrors = score?.warnings.filter((warning) => warning.severity === 'error') || []
+    if (scoreErrors.length > 0) {
+      setMode('parts')
+      setError({
+        message: `${scoreErrors.length} score error${scoreErrors.length === 1 ? '' : 's'} must be corrected before sending the score.`,
+        hint: scoreErrors[0].message,
+      })
+      return
+    }
+    const aligned = score?.playerText?.trim() || ''
+    if (aligned) {
+      onUseText?.(aligned)
+      onClose()
+      return
+    }
+    const raw = pagesToPlayerText(pageResults).trim()
+    if (!raw) {
       setError({ message: 'There is no recognized text to send to the player.', hint: '' })
       return
     }
-    onUseText?.(text)
+    if (
+      !window.confirm(
+        'No measure-aligned notes were found. Send the raw recognized text to the player instead? It may include labels or lyrics that are not playable.'
+      )
+    ) {
+      return
+    }
+    onUseText?.(raw)
     onClose()
   }
 
@@ -546,6 +672,17 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
           {notice && (
             <div className="scan-notice" role="status">
               {notice}
+            </div>
+          )}
+          {scoreState.error && (
+            <div className="error-box scan-error" role="alert">
+              <div>
+                <strong>Could not align the recognized music.</strong>
+                <span>{scoreState.error.message}</span>
+              </div>
+              <button type="button" className="btn btn-small" onClick={() => setMode('text')}>
+                Review text
+              </button>
             </div>
           )}
 
@@ -753,10 +890,11 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
                     </div>
                     <div className="scan-result-meta">
                       <span>
-                        {currentResult.lines.length} lines · {currentResult.uncertain_count} uncertain ·{' '}
-                        {Math.round(currentResult.mean_confidence * 100)}% mean confidence
+                        {mode === 'parts' && score
+                          ? `${score.stats.systems} systems | ${score.stats.measures} measures | ${score.stats.events} scored notes`
+                          : `${currentResult.lines.length} lines | ${currentResult.uncertain_count} uncertain | ${Math.round(currentResult.mean_confidence * 100)}% mean confidence`}
                       </span>
-                      {mode !== 'text' && (
+                      {(mode === 'compare' || mode === 'layout') && (
                         <div className="scan-zoom" aria-label="Layout zoom">
                           <button type="button" onClick={() => zoomBy(-0.25)} disabled={zoom <= 0.5}>
                             −
@@ -827,6 +965,24 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
                       </p>
                     </>
                   )}
+                  {mode === 'parts' &&
+                    (score ? (
+                      <MusicReview
+                        score={score}
+                        overrides={partOverrides}
+                        onAssign={assignPart}
+                        onUndo={() => movePartHistory('undo')}
+                        onRedo={() => movePartHistory('redo')}
+                        canUndo={partHistory.undo.length > 0}
+                        canRedo={partHistory.redo.length > 0}
+                        onSelectEvent={selectScoreEvent}
+                        selectedEventId={selectedEventId}
+                      />
+                    ) : (
+                      <div className="scan-score-empty-state">
+                        Scan a page with recognized notation to build an aligned score.
+                      </div>
+                    ))}
 
                   <div className="scan-actions">
                     <button type="button" className="btn btn-small" onClick={handleCopy}>
@@ -838,8 +994,13 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
                     <button type="button" className="btn btn-small" onClick={handleDownloadSvg}>
                       Export layout .svg
                     </button>
-                    <button type="button" className="btn btn-small" onClick={handleUseText}>
-                      Send text to player
+                    <button
+                      type="button"
+                      className="btn btn-small btn-primary"
+                      onClick={handleUseText}
+                      disabled={Boolean(scoreState.error)}
+                    >
+                      Send aligned score
                     </button>
                     <button
                       type="button"
