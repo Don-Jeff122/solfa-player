@@ -5,7 +5,18 @@ from pathlib import Path
 
 import fitz
 
+from app.ocr_engine import OcrDetection
 from tests.conftest import FakeOcrEngine, make_client, pdf_bytes, png_bytes, wait_for_scan
+
+
+class FragmentedOcrEngine(FakeOcrEngine):
+    def recognize(self, image):  # noqa: ANN001
+        return [
+            OcrDetection("S: d : d", 0.94, (30, 30, 200, 88)),
+            OcrDetection("/ m : -", 0.9, (260, 32, 460, 90)),
+            OcrDetection("A: m : m", 0.55, (30, 140, 200, 198)),
+            OcrDetection("/ s : -", 0.88, (260, 142, 460, 200)),
+        ]
 
 
 class BlockingOcrEngine(FakeOcrEngine):
@@ -80,6 +91,25 @@ def test_upload_preview_and_scan_image(client):
     image = client.get(f"/api/scan/{document['id']}/pages/1/image")
     assert image.status_code == 200
     assert image.headers["content-type"] == "image/jpeg"
+
+
+def test_scan_merges_fragmented_ocr_rows_before_returning_lines(tmp_path):
+    with make_client(tmp_path, engine=FragmentedOcrEngine()) as client:
+        response = client.post(
+            "/api/documents",
+            files={"file": ("fragments.png", png_bytes(), "image/png")},
+        )
+        document = response.json()
+        client.post(f"/api/documents/{document['id']}/scan", json={"pages": [1]})
+        wait_for_scan(client, document["id"])
+
+        page = client.get(f"/api/scan/{document['id']}/pages/1").json()
+        assert len(page["lines"]) == 2
+        assert page["lines"][0]["text"].startswith("S: d : d")
+        assert page["lines"][0]["text"].endswith("/ m : -")
+        assert page["lines"][0]["row"] == 0
+        assert page["lines"][1]["row"] == 1
+        assert len(page["lines"][0]["chars"]) == len("S:d:d/m:-")
 
 
 def test_scan_result_and_corrections(client):

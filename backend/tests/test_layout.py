@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from app.imaging import attach_underlines, detect_rules
-from app.layout import apply_corrections, compose_text, make_line
+from app.layout import apply_corrections, compose_text, make_line, merge_line_fragments
 from app.schemas import BBox, CorrectionItem, PageResult, ScanRule
 
 
@@ -54,6 +54,35 @@ def test_wide_columns_are_not_joined_in_editable_text():
     assert lines[2].strip() == "S: r : r"
     assert lines[1].startswith(" ")
     assert "S: d : d A: m : m" not in text
+
+
+def test_merge_line_fragments_rebuilds_rows_and_keeps_character_sources():
+    left = make_line("d : d", (40, 50, 180, 90), 0.91, 1, 0, 0.7)
+    right = make_line("m : m", (360, 52, 520, 92), 0.87, 1, 1, 0.7)
+    below = make_line("s : s", (40, 150, 180, 190), 0.95, 1, 2, 0.7)
+    merged = merge_line_fragments([right, below, left], 1, 0.7)
+    assert len(merged) == 2
+    first, second = merged
+    assert first.id == "p1-l0"
+    assert second.id == "p1-l1"
+    assert first.row == 0
+    assert second.row == 1
+    assert first.text.startswith("d : d")
+    assert first.text.endswith("m : m")
+    assert first.raw_text == first.text
+    assert second.text == "s : s"
+    assert "".join(char.text for char in first.chars) == "d:dm:m"
+    assert all(0 <= char.offset < len(first.text) for char in first.chars)
+    assert len({char.id for char in first.chars}) == len(first.chars)
+    assert min(char.bbox.x0 for char in first.chars) < 200
+    assert max(char.bbox.x1 for char in first.chars) > 350
+
+
+def test_merge_line_fragments_keeps_adjacent_rows_separate_when_boxes_overlap_slightly():
+    upper = make_line("d : d", (40, 50, 500, 100), 0.9, 1, 0, 0.7)
+    lower = make_line("m : m", (40, 96, 500, 146), 0.9, 1, 1, 0.7)
+    merged = merge_line_fragments([lower, upper], 1, 0.7)
+    assert [line.text for line in merged] == ["d : d", "m : m"]
 
 
 def test_correction_changes_only_selected_character_and_survives_second_edit():

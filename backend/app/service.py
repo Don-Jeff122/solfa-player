@@ -20,7 +20,13 @@ from .imaging import (
     prepare_page,
     write_preview,
 )
-from .layout import apply_corrections, compose_text, make_line, page_statistics
+from .layout import (
+    apply_corrections,
+    compose_text,
+    make_line,
+    merge_line_fragments,
+    page_statistics,
+)
 from .ocr_engine import OcrEngine, OcrUnavailableError, PaddleOcrEngine
 from .schemas import (
     CorrectionItem,
@@ -286,10 +292,9 @@ class ScanService:
                 )
                 rules = detect_rules(prepared.gray)
                 detections = self.engine.recognize(prepared.image)
-                detections.sort(key=lambda item: (round(item.bbox[1] / 8), item.bbox[0]))
-                lines: list[ScanLine] = []
+                fragments: list[ScanLine] = []
                 for line_index, detection in enumerate(detections):
-                    lines.append(
+                    fragments.append(
                         make_line(
                             detection.text,
                             detection.bbox,
@@ -299,6 +304,11 @@ class ScanService:
                             self.settings.uncertain_threshold,
                         )
                     )
+                lines = merge_line_fragments(
+                    fragments,
+                    page_number,
+                    self.settings.uncertain_threshold,
+                )
                 remaining_rules = attach_underlines(lines, rules)
                 text = compose_text(lines)
                 mean, uncertain_count = page_statistics(lines)

@@ -297,6 +297,77 @@ describe('buildScannedScore', () => {
     expect(score.systems[1].rows.map((row) => row.lineId)).toEqual(['right-s', 'right-a'])
   })
 
+  it('rebuilds one scanned system from repaired real-sheet OCR fragments', () => {
+    const lines = [
+      makeLine('title', 'NUN DANKFT', 10),
+      makeLine('header', 'Doh = F', 30),
+      makeLine('s', 's s :s /1 :1 s :- / :m jf :m /r :m r :- /d', 50),
+      makeLine('a', 'd  r :d /d :d d : - / : d ht:d  /t: d d_:t_{}/s}', 80),
+      makeLine('t', 'm s f :m /f : f m :- / :s f:s /s :s :s.f/m', 110),
+      makeLine('b', 'd t, : d / f, : 1, d : / : d, |r :mf/s, : d | f / d', 140),
+      makeLine('lyric', 'Mon-kam- fo Nyan-ko-pon mo a-nom ne ko-ma mu', 170),
+    ]
+    const score = buildScannedScore([makePage(lines)])
+
+    expect(score.key).toBe('F')
+    expect(score.systems).toHaveLength(1)
+    expect(score.systems[0].rows.map((row) => row.lineId)).toEqual(['s', 'a', 't', 'b'])
+    expect(score.systems[0].rows.map((row) => row.part)).toEqual([
+      'Soprano',
+      'Alto',
+      'Tenor',
+      'Bass',
+    ])
+    expect(score.stats.unassignedLines).toBe(0)
+    expect(score.warnings.some((warning) => warning.code === 'ocr-repair')).toBe(true)
+    expect(score.warnings.some((warning) => warning.code === 'unreadable-line')).toBe(false)
+    expect(score.playerText).toContain('Soprano\n')
+    expect(score.playerText).toContain('Bass\n')
+  })
+
+  it('assigns all four vertical rows even when their notation is unreadable', () => {
+    const lines = [
+      makeLine('s', 'd : d . . d / d', 50),
+      makeLine('a', 'm : m . . m / m', 80),
+      makeLine('t', 's : s . . s / s', 110),
+      makeLine('b', 'd, : d, . . d, / d,', 140),
+    ]
+    const score = buildScannedScore([makePage(lines)])
+
+    expect(score.systems).toHaveLength(1)
+    expect(score.systems[0].rows.map((row) => row.part)).toEqual([
+      'Soprano',
+      'Alto',
+      'Tenor',
+      'Bass',
+    ])
+    expect(score.stats.unassignedLines).toBe(0)
+    expect(score.warnings.some((warning) => warning.severity === 'error')).toBe(true)
+  })
+
+  it('uses long vertical rules as measured barlines when OCR misses them', () => {
+    const lines = [
+      makeLine('s', 'Soprano: Do Do Re Re Mi Mi Fa Fa Do Do Re Re', 50),
+      makeLine('a', 'Alto: Mi Mi Fa Fa So So La La Mi Mi Fa Fa', 80),
+      makeLine('t', 'Tenor: So So La La Do Do Re Re So So La La', 110),
+      makeLine('b', 'Bass: Do, Do, Re, Re, Mi, Mi, Fa, Fa Do, Do, Re, Re', 140),
+    ]
+    const page = makePage(lines)
+    page.rules = [100, 220, 340, 460].map((x, index) => ({
+      id: `bar-${index}`,
+      orientation: 'vertical' as const,
+      x0: x,
+      y0: 40,
+      x1: x,
+      y1: 200,
+    }))
+    const score = buildScannedScore([page])
+
+    expect(score.systems).toHaveLength(1)
+    expect(score.systems[0].measureIndexes).toHaveLength(4)
+    expect(score.measures).toHaveLength(4)
+  })
+
   it('extracts a combined key and metre header', () => {
     expect(extractHeaders('Key: Bb Metre: 6/8')).toEqual({
       key: 'Bb',

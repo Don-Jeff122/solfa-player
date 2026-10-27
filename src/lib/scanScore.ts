@@ -1,3 +1,4 @@
+import { HYMN_WORDS } from './hymnal.js'
 import { keyToSemitones, normalizeKey } from './notes.js'
 import { parseSolfa } from './parseSolfa.js'
 
@@ -216,6 +217,7 @@ interface ParsedLine {
   notes: LineNote[]
   bars: BarFlag[]
   barXs: number[]
+  repaired: boolean
 }
 
 interface SolfaNoteLike {
@@ -439,21 +441,124 @@ function sourceAt(
   }
 }
 
+function splitRepairWord(word: string): { start: number; end: number }[] {
+  const pieces: { start: number; end: number }[] = []
+  let index = 0
+  while (index < word.length) {
+    let found = -1
+    const limit = Math.min(word.length, index + 4)
+    for (let end = limit; end > index; end--) {
+      if (Object.prototype.hasOwnProperty.call(HYMN_WORDS, word.slice(index, end))) {
+        found = end
+        break
+      }
+    }
+    if (found > index) {
+      pieces.push({ start: index, end: found })
+      index = found
+    } else {
+      index++
+    }
+  }
+  return pieces
+}
+
+function repairMusicText(text: string): { text: string; offsets: number[]; changed: boolean } {
+  const normalized: { char: string; index: number }[] = []
+  let changed = false
+  for (let index = 0; index < text.length; index++) {
+    let char = text[index]
+    if (/[A-Z]/.test(char)) {
+      char = char.toLowerCase()
+      changed = true
+    }
+    if (char === '1') {
+      const previous = normalized.length ? normalized[normalized.length - 1].char : ''
+      char = /[drmfslt]/.test(previous) ? ',' : 'l'
+      changed = true
+    } else if (char === '3') {
+      char = 's'
+      changed = true
+    } else if (char === ';') {
+      char = ':'
+      changed = true
+    } else if (char === '7') {
+      changed = true
+      continue
+    } else if (!/[a-z0-9\s:|/.,'’_\-{}‖]/.test(char)) {
+      changed = true
+      continue
+    }
+    normalized.push({ char, index })
+  }
+  const repaired: { char: string; index: number }[] = []
+  for (let index = 0; index < normalized.length; ) {
+    const item = normalized[index]
+    if (!/[a-z]/.test(item.char)) {
+      repaired.push(item)
+      index++
+      continue
+    }
+    let end = index + 1
+    while (end < normalized.length && /[a-z]/.test(normalized[end].char)) end++
+    const run = normalized.slice(index, end)
+    const word = run.map((entry) => entry.char).join('')
+    if (Object.prototype.hasOwnProperty.call(HYMN_WORDS, word)) {
+      repaired.push(...run)
+    } else {
+      changed = true
+      const pieces = splitRepairWord(word)
+      pieces.forEach((piece, pieceIndex) => {
+        if (pieceIndex > 0) {
+          repaired.push({ char: ' ', index: run[piece.start].index })
+        }
+        for (let cursor = piece.start; cursor < piece.end; cursor++) {
+          repaired.push(run[cursor])
+        }
+      })
+    }
+    index = end
+  }
+  return {
+    text: repaired.map((entry) => entry.char).join(''),
+    offsets: repaired.map((entry) => entry.index),
+    changed,
+  }
+}
+
 function parseLineMusic(analysis: LineAnalysis): ParsedLine {
-  const text = analysis.musicText.trim()
+  const text = analysis.musicText
   const empty: ParsedLine = {
     ok: false,
     error: null,
     notes: [],
     bars: [],
     barXs: [],
+    repaired: false,
   }
-  if (!text) return empty
+  if (!text.trim()) return empty
   let parsed: SolfaParseLike
   try {
     parsed = parseSolfa(text, { allowIncompleteRepeats: true }) as SolfaParseLike
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : String(error) }
+  }
+  let repair: { text: string; offsets: number[]; changed: boolean } | null = null
+  if (!parsed.ok && (analysis.label || MUSIC_HINT.test(text))) {
+    const candidate = repairMusicText(text)
+    if (candidate.changed && candidate.text.trim() && candidate.text !== text) {
+      try {
+        const retry = parseSolfa(candidate.text, {
+          allowIncompleteRepeats: true,
+        }) as SolfaParseLike
+        if (retry.ok) {
+          parsed = retry
+          repair = candidate
+        }
+      } catch {
+        // Keep the original parse error when OCR repair cannot be read either.
+      }
+    }
   }
   if (!parsed.ok) {
     return { ...empty, error: parsed.error?.message || 'The line could not be parsed.' }
@@ -461,7 +566,8 @@ function parseLineMusic(analysis: LineAnalysis): ParsedLine {
   const part = parsed.result?.parts.find((item) => item.notes.length > 0)
   if (!part) return empty
   const sourceText = analysis.line.text || analysis.line.raw_text || ''
-  const search = normalizeSearchText(sourceText.slice(analysis.musicOffset)).toLowerCase()
+  const searchText = repair ? repair.text : sourceText.slice(analysis.musicOffset)
+  const search = normalizeSearchText(searchText).toLowerCase()
   const chars = [...(analysis.line.chars || [])].sort((a, b) => a.offset - b.offset)
   let cursor = 0
   let previousToken = ''
@@ -479,8 +585,10 @@ function parseLineMusic(analysis: LineAnalysis): ParsedLine {
       }
       let source: SourceRef | null = null
       if (match >= 0) {
-        const rawStart = analysis.musicOffset + match
-        const rawEnd = rawStart + needle.length
+        const first = repair ? repair.offsets[match] : match
+        const last = repair ? repair.offsets[match + needle.length - 1] : match + needle.length - 1
+        const rawStart = analysis.musicOffset + first
+        const rawEnd = analysis.musicOffset + last + 1
         source = sourceAt(analysis.line, analysis.pageNumber, rawStart, rawEnd)
         cursor = match + needle.length
         previousToken = needle
@@ -498,12 +606,14 @@ function parseLineMusic(analysis: LineAnalysis): ParsedLine {
         : note.solfa == null
           ? 0.5
           : 0
-      const uncertain = source
-        ? source.charIds.some((id) => {
-            const char = chars.find((item) => item.id === id)
-            return Boolean(char && char.uncertain && !char.corrected)
-          })
-        : false
+      const uncertain = Boolean(
+        repair ||
+          (source &&
+            source.charIds.some((id) => {
+              const char = chars.find((item) => item.id === id)
+              return Boolean(char && char.uncertain && !char.corrected)
+            }))
+      )
       const underline = analysis.line.underline
       const underlined = Boolean(
         underline &&
@@ -542,6 +652,7 @@ function parseLineMusic(analysis: LineAnalysis): ParsedLine {
     notes,
     bars,
     barXs: barPositions(analysis.line, analysis.musicOffset),
+    repaired: Boolean(repair),
   }
 }
 
@@ -641,6 +752,7 @@ function buildLineAnalysis(
       notes: [],
       bars: [],
       barXs: [],
+      repaired: false,
     },
   }
   if (header || labelOnly || LYRIC_LINE.test(text)) return base
@@ -760,7 +872,6 @@ function assignSystemParts(system: SystemDraft, warnings: ScoreWarning[]): void 
   const unassigned = rows.filter(
     (line) =>
       !line.part.name &&
-      line.parsed.ok &&
       !(line.part.source === 'user' && !line.part.name)
   )
   const missing = SCANNED_VOICES.filter((voice) => !used.has(voice))
@@ -790,7 +901,38 @@ function assignSystemParts(system: SystemDraft, warnings: ScoreWarning[]): void 
   }
 }
 
+function ruleBarPositions(rows: LineAnalysis[]): number[] {
+  if (!rows.length) return []
+  const page = rows[0].page
+  const x0 = Math.min(...rows.map((line) => line.line.bbox.x0))
+  const x1 = Math.max(...rows.map((line) => line.line.bbox.x1))
+  const y0 = Math.min(...rows.map((line) => line.line.bbox.y0))
+  const y1 = Math.max(...rows.map((line) => line.line.bbox.y1))
+  const height = Math.max(y1 - y0, 1)
+  const left = x0 + Math.max(12, page.width * 0.03)
+  const right = x1 - Math.max(12, page.width * 0.03)
+  const minOverlap = Math.max(height * 0.72, 36)
+  const candidates = (page.rules || [])
+    .filter((rule) => rule.orientation === 'vertical')
+    .map((rule) => ({
+      x: (rule.x0 + rule.x1) / 2,
+      overlap: Math.min(rule.y1, y1) - Math.max(rule.y0, y0),
+    }))
+    .filter((rule) => rule.overlap >= minOverlap && rule.x > left && rule.x < right)
+    .map((rule) => rule.x)
+    .sort((a, b) => a - b)
+  const tolerance = Math.max(4, page.width * 0.006)
+  const positions: number[] = []
+  for (const x of candidates) {
+    if (!positions.length || x - positions[positions.length - 1] > tolerance) positions.push(x)
+    else positions[positions.length - 1] = (positions[positions.length - 1] + x) / 2
+  }
+  return positions
+}
+
 function systemBarPositions(rows: LineAnalysis[]): number[] {
+  const fromRules = ruleBarPositions(rows)
+  if (fromRules.length) return fromRules
   const best = [...rows]
     .filter((line) => line.parsed.ok)
     .sort(
@@ -877,14 +1019,19 @@ function buildSystemMeasures(
   )
   const fallbackBox = unionBox(rows.map((line) => line.line.bbox))
   const content = boxes.length ? unionBox(boxes) : fallbackBox
-  const bars = systemBarPositions(eventRows)
-  const internal: number[] = []
+  let bars = systemBarPositions(rows)
   const tolerance = Math.max(4, draft.page.width * 0.008)
-  for (const x of bars) {
-    if (x > content.x0 + tolerance && x < content.x1 - tolerance) internal.push(x)
-  }
   let x0 = content.x0
   let x1 = content.x1
+  const boundaryTolerance = Math.max(24, draft.page.width * 0.08)
+  if (bars.length > 1 && bars[0] - content.x0 <= boundaryTolerance) {
+    x0 = bars[0]
+    bars = bars.slice(1)
+  }
+  const internal: number[] = []
+  for (const x of bars) {
+    if (x > x0 + tolerance && x < x1 - tolerance) internal.push(x)
+  }
   if (!internal.length) {
     x0 = Math.min(...rows.map((line) => line.line.bbox.x0))
     x1 = Math.max(...rows.map((line) => line.line.bbox.x1))
@@ -1152,6 +1299,17 @@ export function buildScannedScore(
         })
       }
     }
+    const repairedCount = pageLines.filter(
+      (line) => line.parsed.repaired && musicCandidate(line)
+    ).length
+    if (repairedCount) {
+      warnings.push({
+        code: 'ocr-repair',
+        severity: 'warning',
+        message: `${repairedCount} music line${repairedCount === 1 ? '' : 's'} contained OCR-confused symbols that were normalized conservatively. Review the highlighted notes before playback.`,
+        page: page.page,
+      })
+    }
     analyses.push(
       ...pageLines.filter(
         (line) =>
@@ -1168,8 +1326,8 @@ export function buildScannedScore(
     const partial = groupSystems(pageAnalyses, page, page.page)
     drafts.push(...partial)
   }
-  const musicLineCount = drafts.reduce((count, draft) => count + draft.lines.filter((line) => line.parsed.ok && line.parsed.notes.length).length, 0)
-  if (musicLineCount === 1) {
+  const candidateLineCount = drafts.reduce((count, draft) => count + draft.lines.length, 0)
+  if (candidateLineCount === 1) {
     const only = drafts
       .flatMap((draft) => draft.lines)
       .find(

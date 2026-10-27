@@ -119,33 +119,160 @@ def make_line(
     )
 
 
-def _row_groups(lines: list[ScanLine]) -> list[list[ScanLine]]:
+def _box_height(box: BBox) -> float:
+    return max(box.y1 - box.y0, 1.0)
+
+
+def _same_visual_row(left: ScanLine, right: ScanLine, median_height: float) -> bool:
+    overlap = min(left.bbox.y1, right.bbox.y1) - max(left.bbox.y0, right.bbox.y0)
+    if overlap > 0:
+        ratio = overlap / min(_box_height(left.bbox), _box_height(right.bbox))
+        if ratio >= 0.5:
+            return True
+    left_center = (left.bbox.y0 + left.bbox.y1) / 2
+    right_center = (right.bbox.y0 + right.bbox.y1) / 2
+    return abs(left_center - right_center) <= max(6.0, median_height * 0.28)
+
+
+def _group_visual_rows(lines: list[ScanLine]) -> list[list[ScanLine]]:
     if not lines:
         return []
     ordered = sorted(lines, key=lambda line: (line.bbox.y0, line.bbox.x0))
-    heights = [max(line.bbox.y1 - line.bbox.y0, 1.0) for line in ordered]
-    tolerance = max(6.0, sorted(heights)[len(heights) // 2] * 0.55)
+    heights = sorted(_box_height(line.bbox) for line in ordered)
+    median_height = heights[len(heights) // 2]
     rows: list[list[ScanLine]] = []
     for line in ordered:
-        cy = (line.bbox.y0 + line.bbox.y1) / 2
         placed = False
         for row in rows:
-            row_y0 = min(item.bbox.y0 for item in row)
-            row_y1 = max(item.bbox.y1 for item in row)
-            row_cy = (row_y0 + row_y1) / 2
-            overlap = min(line.bbox.y1, row_y1) - max(line.bbox.y0, row_y0)
-            if overlap > 0 or abs(cy - row_cy) <= tolerance:
+            if _same_visual_row(row[0], line, median_height):
                 row.append(line)
                 placed = True
                 break
         if not placed:
             rows.append([line])
     rows.sort(key=lambda row: (min(line.bbox.y0 for line in row), min(line.bbox.x0 for line in row)))
+    for row in rows:
+        row.sort(key=lambda line: (line.bbox.x0, line.bbox.y0))
+    return rows
+
+
+def _row_groups(lines: list[ScanLine]) -> list[list[ScanLine]]:
+    rows = _group_visual_rows(lines)
     for index, row in enumerate(rows):
-        row.sort(key=lambda line: line.bbox.x0)
         for line in row:
             line.row = index
     return rows
+
+
+def _median_char_width(lines: list[ScanLine]) -> float:
+    widths = sorted(
+        char.bbox.x1 - char.bbox.x0
+        for line in lines
+        for char in line.chars
+        if char.bbox.x1 > char.bbox.x0
+    )
+    return widths[len(widths) // 2] if widths else 12.0
+
+
+def merge_line_fragments(
+    lines: list[ScanLine],
+    page_number: int,
+    threshold: float,
+) -> list[ScanLine]:
+    """Merge OCR fragments that describe the same printed row.
+
+    PaddleOCR often returns several horizontal boxes for one long solfa row.
+    Treating each box as an independent line destroys the four-part order and
+    puts fragments from different voices into separate systems. Fragments are
+    joined left-to-right here, while their character boxes keep their original
+    page coordinates for review and source highlighting.
+    """
+    rows = _group_visual_rows(lines)
+    merged: list[ScanLine] = []
+    for row_index, row in enumerate(rows):
+        line_index = len(merged)
+        if len(row) == 1:
+            fragment = row[0]
+            old_to_new: dict[str, str] = {}
+            chars: list[ScanChar] = []
+            for char_index, char in enumerate(fragment.chars):
+                new_id = f"p{page_number}-l{line_index}-c{char_index}"
+                old_to_new[char.id] = new_id
+                chars.append(char.model_copy(update={"id": new_id}))
+            for char in chars:
+                if char.modifier_of:
+                    char.modifier_of = old_to_new.get(char.modifier_of)
+            merged.append(
+                fragment.model_copy(
+                    update={
+                        "id": f"p{page_number}-l{line_index}",
+                        "chars": chars,
+                        "row": row_index,
+                    }
+                )
+            )
+            continue
+        median_char = _median_char_width(row)
+        text = ""
+        chars = []
+        old_to_new = {}
+        previous_x1: float | None = None
+        char_index = 0
+        for fragment in row:
+            stripped = fragment.text.strip()
+            if not stripped:
+                continue
+            if previous_x1 is not None:
+                gap = fragment.bbox.x0 - previous_x1
+                spaces = min(8, max(1, round(gap / median_char))) if gap > 1 else 1
+                text += " " * spaces
+            leading = len(fragment.text) - len(fragment.text.lstrip())
+            start = len(text)
+            text += stripped
+            for char in fragment.chars:
+                if char.offset < leading or char.offset >= leading + len(stripped):
+                    continue
+                new_id = f"p{page_number}-l{line_index}-c{char_index}"
+                old_to_new[char.id] = new_id
+                chars.append(
+                    char.model_copy(
+                        update={
+                            "id": new_id,
+                            "offset": start + char.offset - leading,
+                        }
+                    )
+                )
+                char_index += 1
+            previous_x1 = fragment.bbox.x1
+        if not text:
+            continue
+        for char in chars:
+            if char.modifier_of:
+                char.modifier_of = old_to_new.get(char.modifier_of)
+        box = BBox(
+            x0=min(fragment.bbox.x0 for fragment in row),
+            y0=min(fragment.bbox.y0 for fragment in row),
+            x1=max(fragment.bbox.x1 for fragment in row),
+            y1=max(fragment.bbox.y1 for fragment in row),
+        )
+        total_chars = sum(max(len(fragment.chars), 1) for fragment in row)
+        confidence = (
+            sum(fragment.confidence * max(len(fragment.chars), 1) for fragment in row)
+            / total_chars
+        )
+        merged.append(
+            ScanLine(
+                id=f"p{page_number}-l{line_index}",
+                text=text,
+                raw_text=text,
+                bbox=box,
+                confidence=round(confidence, 4),
+                uncertain=any(char.uncertain for char in chars) or confidence < threshold,
+                chars=chars,
+                row=row_index,
+            )
+        )
+    return merged
 
 
 def compose_text(lines: list[ScanLine]) -> str:
