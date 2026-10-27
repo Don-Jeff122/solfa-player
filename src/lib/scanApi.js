@@ -1,5 +1,8 @@
 const configured = import.meta.env.VITE_SCAN_API_URL || 'http://127.0.0.1:8000'
 export const API_BASE = configured.replace(/\/+$/, '')
+const localApi = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(API_BASE)
+const hostedWithoutBackend =
+  localApi && typeof window !== 'undefined' && window.location.protocol === 'https:'
 
 export class ScanApiError extends Error {
   constructor(message, { status = 0, hint = '', offline = false } = {}) {
@@ -9,6 +12,29 @@ export class ScanApiError extends Error {
     this.hint = hint
     this.offline = offline
   }
+}
+
+function abortReason(signal) {
+  if (signal?.reason instanceof Error) return signal.reason
+  const error = new Error('This operation was aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+function wait(ms, signal) {
+  if (signal?.aborted) return Promise.reject(abortReason(signal))
+  return new Promise((resolve, reject) => {
+    let timer
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortReason(signal))
+    }
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export function apiUrl(path) {
@@ -25,7 +51,9 @@ async function request(path, options = {}) {
     if (err?.name === 'AbortError') throw err
     throw new ScanApiError('Could not reach the scanner backend.', {
       offline: true,
-      hint: `Start the FastAPI service at ${API_BASE} and check VITE_SCAN_API_URL if it runs elsewhere.`,
+      hint: hostedWithoutBackend
+        ? 'This hosted build has no OCR backend URL. Set VITE_SCAN_API_URL and redeploy GitHub Pages.'
+        : `Start the FastAPI service at ${API_BASE} and check VITE_SCAN_API_URL if it runs elsewhere.`,
     })
   }
   let payload = null
@@ -86,6 +114,21 @@ export async function deleteDocument(documentId) {
   return request(`/api/documents/${documentId}`, { method: 'DELETE' })
 }
 
-export async function checkHealth(signal) {
-  return request('/api/health', { signal })
+export async function checkHealth(
+  signal,
+  { attempts = localApi ? 2 : 8, intervalMs = localApi ? 1500 : 7000, onRetry } = {}
+) {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await request('/api/health', { signal })
+    } catch (err) {
+      lastError = err
+      const transient = err?.offline || (err?.status >= 500 && err?.status <= 599)
+      if (err?.name === 'AbortError' || !transient || attempt === attempts) throw err
+      onRetry?.(attempt, err)
+      await wait(intervalMs, signal)
+    }
+  }
+  throw lastError
 }

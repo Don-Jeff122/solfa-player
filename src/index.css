@@ -1223,12 +1223,14 @@ user-select: none;
   box-shadow: 0 0 8px rgba(81, 214, 163, 0.7);
 }
 
-.scan-backend.checking {
+.scan-backend.checking,
+.scan-backend.waking {
   border-color: rgba(245, 185, 66, 0.35);
   color: var(--accent);
 }
 
-.scan-backend.checking::before {
+.scan-backend.checking::before,
+.scan-backend.waking::before {
   background: var(--accent);
 }
 

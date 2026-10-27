@@ -79,9 +79,12 @@ automatically. API documentation is served at <http://127.0.0.1:8000/docs>.
 The frontend defaults to `http://127.0.0.1:8000`. Point it elsewhere with
 `VITE_SCAN_API_URL` at build/dev time, and allow the deployed origin through
 `SOLFA_SCAN_CORS_ORIGINS` on the backend. Some browsers block an HTTPS deployment
-from calling a plain-HTTP loopback service, so use a local frontend or an HTTPS
-backend when scanning from the hosted site. Playback and the rest of the app
+from calling a plain-HTTP loopback service, so use a local frontend or the HTTPS
+backend described under [Deploying](#deploying). Playback and the rest of the app
 remain static and work without the backend; only scanning needs it.
+
+When the hosted OCR service has been idle, the scanner retries the health check
+for up to about a minute and shows "Waking OCR service…" while it starts.
 
 ### Scanner tests
 
@@ -127,6 +130,41 @@ builds the app and publishes it on every push to `main`. The Vite build uses a
 relative `base` (`./` in `vite.config.js`) so the app also works from the
 Pages subpath.
 
+GitHub Pages cannot run FastAPI or PaddleOCR. The live scanner therefore uses a
+separate public Docker Space on Hugging Face, kept in sync by a second workflow.
+
+### Hugging Face backend setup
+
+A Hugging Face PRO account is required for Docker Spaces. The public Space uses
+the CPU Basic runtime (2 vCPU, 16 GB RAM).
+
+1. Create a Hugging Face write token with access to Spaces:
+   <https://huggingface.co/settings/tokens>.
+2. Add it to the GitHub repository as the secret `HF_TOKEN`.
+3. Add the repository variable `HF_SPACE_ID` using
+   `<your-hf-username>/solfa-scan-api`.
+4. Run the **Deploy backend to Hugging Face** workflow. It creates the public
+   Docker Space if needed and uploads `backend/`; do not edit the Space files
+   directly.
+5. Wait for the Space to finish building, then open its direct URL,
+   `https://<your-hf-username>-solfa-scan-api.hf.space`. Check
+   `/api/health` returns an OCR description.
+6. Add the repository variable `VITE_SCAN_API_URL` with that URL, then rerun the
+   **Deploy to GitHub Pages** workflow.
+
+The Space builds the OCR models into the image, so restarts do not re-download
+them. It sleeps after prolonged inactivity and wakes on the next request; the
+scanner retries while it starts.
+
+`backend/Dockerfile` allows the production Pages origin
+`https://don-jeff122.github.io`. Update `SOLFA_SCAN_CORS_ORIGINS` there if the
+frontend origin changes. Uploads, jobs and corrections remain temporary and are
+cleared when the Space restarts; do not scan sensitive documents.
+
+To return to the pre-deployment state, check out the `pre-hf-deploy` tag,
+remove `VITE_SCAN_API_URL` from the repository variables, rerun the Pages
+workflow, and pause or delete the Hugging Face Space.
+
 ## Offline use (installable PWA)
 
 The build is a Progressive Web App: open the deployed site once and install it
@@ -150,4 +188,6 @@ sheets work with no connection.
   review and aligned-text preview
 - `backend/app/`: FastAPI routes, temporary scan jobs, image/PDF preprocessing,
   PaddleOCR adapter and solfa layout reconstruction
+- `backend/Dockerfile`, `backend/README.md`: Hugging Face Docker Space packaging
 - `backend/tests/`: API, layout and opt-in real-OCR tests
+- `.github/workflows/deploy-backend.yml`: mirrors `backend/` to Hugging Face

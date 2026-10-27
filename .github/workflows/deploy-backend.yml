@@ -1,0 +1,55 @@
+name: Deploy backend to Hugging Face
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: huggingface-backend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - name: Check Hugging Face configuration
+        run: |
+          if [ -z "$HF_SPACE_ID" ]; then
+            echo "Set the repository variable HF_SPACE_ID to <owner>/<space>."
+            exit 1
+          fi
+          if [ -z "$HF_TOKEN" ]; then
+            echo "Set the repository secret HF_TOKEN to a Hugging Face write token."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: huggingface/hub-sync@v0.3.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: ${{ env.HF_SPACE_ID }}
+          hf_token: ${{ env.HF_TOKEN }}
+          repo_type: space
+          space_sdk: docker
+          private: false
+          subdirectory: backend
+          exclude: |
+            tests/
+            .venv/
+            .pytest_cache/
+            __pycache__/
+            *.pyc
+            .env
+            .data/
+          delete_removed: true

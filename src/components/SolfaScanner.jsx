@@ -161,7 +161,13 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
   useEffect(() => {
     if (!open) return undefined
     const controller = new AbortController()
-    checkHealth(controller.signal)
+    checkHealth(controller.signal, {
+      onRetry: () =>
+        setBackend({
+          state: 'waking',
+          detail: 'The OCR service is starting. This can take up to a minute.',
+        }),
+    })
       .then((payload) => {
         setBackend({ state: 'ready', detail: payload.ocr || 'OCR ready' })
       })
@@ -633,7 +639,9 @@ export default function SolfaScanner({ open, onClose, onUseText }) {
                 ? 'OCR service online'
                 : backend.state === 'offline'
                   ? 'OCR backend offline'
-                  : 'Checking OCR backend…'}
+                  : backend.state === 'waking'
+                    ? 'Waking OCR service…'
+                    : 'Checking OCR backend…'}
             </span>
             {doc && (
               <button
