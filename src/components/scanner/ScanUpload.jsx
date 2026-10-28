@@ -42,7 +42,7 @@ export default function ScanUpload({ onFile, disabled }) {
         Choose file
       </button>
       <p className="scan-drop-note">
-        Up to 25 MB and 40 PDF pages by default. Files are temporary and removed by the backend.
+        Up to 25 MB and 40 PDF pages by default. Files are processed on your device. Nothing is uploaded.
       </p>
       <input
         ref={inputRef}

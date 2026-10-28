@@ -35,7 +35,8 @@ export default defineConfig({
       },
       workbox: {
         // Precache the app shell so playback and saved sheets work offline.
-        globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico}'],
+        globPatterns: ['**/*.{js,mjs,css,html,svg,png,ico,json}'],
+        maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
         cleanupOutdatedCaches: true,
       },
     }),
