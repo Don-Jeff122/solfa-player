@@ -120,8 +120,7 @@ Remove-Item Env:SOLFA_RUN_OCR_TESTS
   absent: browser-printed HTML would not remain editable or faithful.
 - Printed SVG/TXT must be reviewed against the source; uncertain marks are
   surfaced for that reason.
-- The PWA caches the app shell for offline playback, but scanning still needs a
-  reachable backend.
+- The PWA caches the app shell for offline playback. Browser OCR assets are cached after the first load.
 
 ## Deploying
 

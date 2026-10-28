@@ -24,9 +24,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
-        env:
-          VITE_SCAN_API_URL: ${{ vars.VITE_SCAN_API_URL }}
+        - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
