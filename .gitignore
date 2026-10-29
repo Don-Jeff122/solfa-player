@@ -12,14 +12,8 @@ dist
 dist-ssr
 *.local
 
-# Python scanner backend
-backend/.venv/
-backend/.data/
-backend/.env
-backend/model-smoke.png
-__pycache__/
-*.py[cod]
-.pytest_cache/
+# Stray uncompressed OCR data (the app bundles public/tesseract/lang/*.traineddata.gz)
+eng.traineddata
 
 # Editor directories and files
 .vscode/*

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
 import Piano from './components/Piano.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
-import SolfaScanner from './components/SolfaScanner.jsx'
+import SheetScanner from './components/SheetScanner.jsx'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -141,6 +141,7 @@ export default function App() {
   const [partSel, setPartSel] = useState(null)
   const [tempo, setTempo] = useState(90)
   const [octave, setOctave] = useState(0)
+  const [showScanner, setShowScanner] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeMidi, setActiveMidi] = useState(() => new Set())
   const [noteIndexes, setNoteIndexes] = useState([])
@@ -172,7 +173,6 @@ export default function App() {
   const [position, setPosition] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
   const [textFocused, setTextFocused] = useState(false)
-  const [scannerOpen, setScannerOpen] = useState(false)
   const ring = sustainSeconds(sustain)
 
   const [synth] = useState(() => new Synth())
@@ -1067,13 +1067,6 @@ export default function App() {
             Type tonic solfa, or a full sheet with parts, and hear it on the piano.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn scan-launch"
-          onClick={() => setScannerOpen(true)}
-        >
-          Scan Solfa
-        </button>
       </header>
 
       <div className="layout">
@@ -1081,6 +1074,13 @@ export default function App() {
           <div className="card-head">
             <h2>Music sheet</h2>
             <div className="head-actions">
+              <button
+                type="button"
+                className={`btn btn-small${showScanner ? ' active' : ''}`}
+                onClick={() => setShowScanner((v) => !v)}
+              >
+                Scan image / PDF
+              </button>
               <button
                 type="button"
                 className="btn btn-small"
@@ -1094,6 +1094,18 @@ export default function App() {
               </button>
             </div>
           </div>
+          {showScanner && (
+            <SheetScanner
+              onClose={() => setShowScanner(false)}
+              onApply={(scanned, scannedKey) => {
+                setText(scanned)
+                if (scannedKey) setUiKey(scannedKey)
+                setError(null)
+                setSavedMsg(null)
+                setShowScanner(false)
+              }}
+            />
+          )}
           <textarea
             className="solfa-input"
             value={text}
@@ -1405,16 +1417,6 @@ export default function App() {
           </p>
         </section>
       </div>
-      <SolfaScanner
-        open={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onUseText={(scannedText) => {
-          setText(scannedText)
-          setError(null)
-          setVoiceOctaves({})
-          setSavedMsg('Loaded scanned text. Review uncertain characters before playing.')
-        }}
-      />
       <audio
         ref={audioRef}
         className="bg-audio"

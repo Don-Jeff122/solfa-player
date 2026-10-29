@@ -1,1 +1,0 @@
-"""Solfa Scan backend."""
