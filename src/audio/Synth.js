@@ -50,7 +50,7 @@ export function softClipCurve(size = 2048) {
   return curve
 }
 
-export function deviceProfile() {
+function deviceProfile() {
   if (typeof navigator === 'undefined') {
     return { maxNodes: MAX_NODES_PER_PLAYBACK, maxNotes: MAX_SIMULTANEOUS_NOTES, lookahead: LOOKAHEAD_SECONDS, latencyHint: 'interactive', lowPower: false }
   }
@@ -95,18 +95,18 @@ export const MAX_SIMULTANEOUS_NOTES = 40
  * they are all built at once. Three seconds of lookahead covers a tempo change
  * and typical timer throttling while holding only a handful of notes live.
  */
-export const LOOKAHEAD_SECONDS = 3
+const LOOKAHEAD_SECONDS = 3
 
 /** Never schedule more narrowly than this, or a fast tempo starves the timer. */
-export const LOOKAHEAD_MIN = 0.5
+const LOOKAHEAD_MIN = 0.5
 
 /**
  * How slurred notes are joined. A slur (`_`) means two notes are sung to one
  * syllable, so the first is held this many seconds into the second (the joint
  * never goes silent) and the second swells in rather than re-striking.
  */
-export const LEGATO_OVERLAP = 0.06
-export const LEGATO_ATTACK_SCALE = 0.4
+const LEGATO_OVERLAP = 0.06
+const LEGATO_ATTACK_SCALE = 0.4
 
 /**
  * Which notes of a sequence flow into the next without a fresh attack.

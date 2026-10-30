@@ -173,7 +173,6 @@ export default function ScanResults({
   onUse,
   onRescanPage,
   onRescanAll,
-  onScanUnscannedPage,
   exactDirty,
   region,
   onInsertRegion,
@@ -323,7 +322,7 @@ export default function ScanResults({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={onScanUnscannedPage || onRescanPage}
+                  onClick={onRescanPage}
                   disabled={scanning}
                 >
                   Scan page {activePage}
@@ -391,14 +390,6 @@ export default function ScanResults({
                   disabled={!allExact}
                 >
                   Download .txt
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-quiet"
-                  onClick={() => copy('playable', playableText)}
-                  disabled={!playableText}
-                >
-                  {copied === 'playable' ? 'Copied playable' : 'Copy playable'}
                 </button>
               </div>
 
@@ -469,10 +460,10 @@ export default function ScanResults({
                   <button
                     type="button"
                     className="btn btn-quiet"
-                    onClick={() => copy('playable2', playableText)}
+                    onClick={() => copy('playable', playableText)}
                     disabled={!playableText.trim()}
                   >
-                    {copied === 'playable2' ? 'Copied' : 'Copy playable'}
+                    {copied === 'playable' ? 'Copied playable' : 'Copy playable'}
                   </button>
                 </div>
               </div>

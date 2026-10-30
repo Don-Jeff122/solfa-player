@@ -571,7 +571,6 @@ export default function SheetScanner({ onApply, onClose }) {
                 onUse={useInPlayer}
                 onRescanPage={() => applyPages([pageIndex])}
                 onRescanAll={() => applyPages([...Array(pageCount).keys()])}
-                onScanUnscannedPage={() => applyPages([pageIndex])}
                 exactDirty={exactDirty}
                 region={region}
                 onInsertRegion={(text) => mergeRegionText(text, 'insert')}

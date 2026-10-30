@@ -62,5 +62,8 @@ LSTM core and `eng` language data), so scanning never calls a CDN:
 - `src/audio/Synth.js`, `src/audio/voices.js`: Web Audio synthesizer and
   instrument presets (all plain data, fully unit-tested)
 - `src/components/`: piano, controls, saved sheets, sheet scanner
-- `src/lib/ocr.js`, `src/lib/ocrService.js`: Tesseract OCR + PDF handling,
-  loaded lazily when the scanner opens
+- `src/lib/ocr.js`, `src/lib/ocrService.js`: Tesseract text cleanup and canvas OCR
+- `src/lib/documentService.js`: lazy image/PDF page rendering with pdf.js
+- `src/lib/scan/`: scanner pipeline (canvas tools, preprocessing, uncertainty)
+- `src/lib/staff/`, `src/lib/hymnalScan.js`: staff and four-part hymnal
+  recognition

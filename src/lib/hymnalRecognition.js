@@ -7,6 +7,7 @@ import {
   keyFromHymnalText,
   normalizeHymnalOcr,
 } from './hymnalScan.js'
+import { recognizeCanvas } from './ocrService.js'
 import { parseSolfa } from './parseSolfa.js'
 import { sourceTranscription } from './sourceTranscription.js'
 import { otsuThreshold, toLuma } from './staff/geometry.js'
@@ -149,7 +150,6 @@ function betterCellResult(first, second) {
 }
 
 async function defaultOcrCell(canvas, onProgress) {
-  const { recognizeCanvas } = await import('./ocrService.js')
   const options = {
     onProgress,
     psm: '7',
@@ -162,7 +162,6 @@ async function defaultOcrCell(canvas, onProgress) {
 }
 
 async function defaultOcrHeader(canvas, onProgress) {
-  const { recognizeCanvas } = await import('./ocrService.js')
   return recognizeCanvas(canvas, {
     onProgress,
     psm: '6',

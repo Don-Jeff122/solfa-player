@@ -5,7 +5,7 @@ import {
   scanDocument,
   scanPage,
 } from '../scanService.js'
-import { uncertainWords, uncertaintyCount, worstConfidence } from '../uncertainty.js'
+import { uncertainWords } from '../uncertainty.js'
 
 function classicPage(pageNumber, text, overrides = {}) {
   return {
@@ -252,12 +252,5 @@ describe('uncertainWords', () => {
         bbox: { x0: 28, x1: 36, y0: 12, y1: 22 },
       },
     ])
-  })
-
-  it('reports the worst confidence for quick triage', () => {
-    const found = uncertainWords(words, { threshold: 70 })
-    expect(uncertaintyCount(found)).toBe(2)
-    expect(worstConfidence(found)).toBe(42)
-    expect(worstConfidence([])).toBe(null)
   })
 })

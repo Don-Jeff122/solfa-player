@@ -1,6 +1,6 @@
 import { expandBars } from './repeats.js'
 
-export const SOLFA_OFFSETS = {
+const SOLFA_OFFSETS = {
   do: 0,
   re: 2,
   mi: 4,
@@ -56,7 +56,7 @@ const SEMITONES = {
 
 export const MAJOR_KEYS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
 
-export const BASE_DO_MIDI = 60
+const BASE_DO_MIDI = 60
 
 export const ALL_PARTS = '__all__'
 

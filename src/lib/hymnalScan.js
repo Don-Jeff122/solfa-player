@@ -132,7 +132,7 @@ function mergeStrokes(strokes, tolerance = 2.5) {
   return merged
 }
 
-export function findVerticalStrokes(
+function findVerticalStrokes(
   mask,
   width,
   height,
@@ -284,7 +284,7 @@ function clusterLongStrokes(strokes) {
   return groups
 }
 
-export function findLongSystems(rows, mask, width, height, { xTolerance = 4 } = {}) {
+function findLongSystems(rows, mask, width, height, { xTolerance = 4 } = {}) {
   const minHeight = Math.max(24, Math.round(height * 0.045))
   const strokes = findVerticalStrokes(mask, width, height, {
     minHeight,
@@ -338,7 +338,7 @@ function inkExtent(mask, width, height, top, bottom) {
   return right < left ? { left: 0, right: width - 1 } : { left, right }
 }
 
-export function systemBarLines(system, mask, width, height, { xTolerance = 4 } = {}) {
+function systemBarLines(system, mask, width, height, { xTolerance = 4 } = {}) {
   const clusters = []
   for (const row of system.rows) {
     for (const x of row.bars) {

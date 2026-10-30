@@ -42,7 +42,6 @@ export default function DocumentViewer({
   hasResults,
 }) {
   const dragRef = useRef(null)
-  const viewportRef = useRef(null)
 
   function point(event) {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -196,7 +195,7 @@ export default function DocumentViewer({
         </div>
       </div>
 
-      <div className="scanner-viewport" ref={viewportRef}>
+      <div className="scanner-viewport">
         {preview ? (
           <div className="scanner-page" style={{ width: `${zoom * 100}%` }}>
             <img src={preview.url} alt={`Page ${pageIndex + 1} of the document`} draggable="false" />

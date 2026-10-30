@@ -26,15 +26,3 @@ export function uncertainWords(words = [], { threshold = 70, limit = 250 } = {})
 
   return found
 }
-
-export function uncertaintyCount(uncertain = []) {
-  return uncertain.length
-}
-
-export function worstConfidence(uncertain = []) {
-  let worst = 100
-  for (const entry of uncertain) {
-    if (entry.confidence < worst) worst = entry.confidence
-  }
-  return uncertain.length ? worst : null
-}

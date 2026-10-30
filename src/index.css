@@ -863,16 +863,6 @@ input[type='range']::-moz-range-thumb {
   cursor: progress;
 }
 
-.dropzone-preview {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  opacity: 0.22;
-  pointer-events: none;
-}
-
 .dropzone-body {
   position: relative;
   z-index: 1;
@@ -934,21 +924,6 @@ input[type='range']::-moz-range-thumb {
   line-height: 1.5;
 }
 
-.scanner-result {
-  margin-top: 14px;
-}
-
-.scanner-panes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  align-items: start;
-  gap: 14px;
-}
-
-.scanner-pane {
-  min-width: 0;
-}
-
 .scanner-pane-head {
   display: flex;
   align-items: center;
@@ -966,10 +941,6 @@ input[type='range']::-moz-range-thumb {
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.5;
-}
-
-.scanner-pane .scanner-actions {
-  margin-top: 8px;
 }
 
 .scanner-meta {

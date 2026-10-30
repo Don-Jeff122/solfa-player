@@ -139,9 +139,3 @@ export async function recognizePages(pages, options = {}) {
     parseError: null,
   }
 }
-
-export async function recognizeSheet(file, onProgress) {
-  const { recognizeFile } = await import('./ocrService.js')
-  const pages = await recognizeFile(file, onProgress)
-  return recognizePages(pages, { onProgress })
-}

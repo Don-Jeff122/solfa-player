@@ -81,7 +81,7 @@ export function rotateCanvas(source, degrees) {
 }
 
 /** Crop a rectangle measured in source-image pixels. */
-export function cropCanvas(source, rect) {
+function cropCanvas(source, rect) {
   const x = Math.max(0, Math.floor(rect.x))
   const y = Math.max(0, Math.floor(rect.y))
   const width = Math.max(1, Math.min(source.width - x, Math.ceil(rect.width)))

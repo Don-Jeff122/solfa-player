@@ -18,7 +18,7 @@ export function toMask(luma, width, height, threshold) {
 }
 
 /** Vertical position of the nth staff step below the top line. */
-export function staffFrame(staff) {
+function staffFrame(staff) {
   const { top, bottom, spacing } = staff
   return {
     ...staff,
@@ -36,7 +36,7 @@ export function staffFrame(staff) {
  * Erase staff-line ink while leaving noteheads and stems in place.
  * Returns a new mask.
  */
-export function removeStaffLines(mask, width, height, staff) {
+function removeStaffLines(mask, width, height, staff) {
   const out = mask.slice()
   const thicknesses = staff.lineThickness || [2, 2, 2, 2, 2]
   const pad = Math.max(2, Math.round(staff.spacing * 0.14))
@@ -118,7 +118,7 @@ function horizontalRun(mask, width, height, y, x) {
  * Find noteheads as ellipse-shaped horizontal runs. Works for hollow heads too,
  * because the ring's upper and lower arcs are still continuous runs.
  */
-export function findHeads(mask, width, height, staff) {
+function findHeads(mask, width, height, staff) {
   const f = staffFrame(staff)
   const found = [
     ...scanFilledHeads(mask, width, height, f),
@@ -351,7 +351,7 @@ function isFilled(mask, width, head) {
 }
 
 /** Stems: narrow and tall columns of ink. */
-export function findStems(mask, width, height, staff) {
+function findStems(mask, width, height, staff) {
   const f = staffFrame(staff)
   const maxWidth = Math.max(2, Math.round(f.spacing * 0.25))
   const minHeight = Math.round(f.spacing * 1.5)
@@ -385,7 +385,7 @@ export function findStems(mask, width, height, staff) {
  * Beams: bars joining two or more stems. Counted per stem as the number of
  * separate bars covering it, which gives eighth (1) or sixteenth (2).
  */
-export function findBeams(mask, width, height, staff, stems) {
+function findBeams(mask, width, height, staff, stems) {
   const f = staffFrame(staff)
   const minBar = f.spacing * 1.2
   const bars = []
@@ -427,7 +427,7 @@ export function findBeams(mask, width, height, staff, stems) {
  * Augmentation dots: a small compact blob just right of a notehead at the same
  * height. Stems are ruled out by requiring the blob to be vertically small.
  */
-export function findDots(mask, width, height, staff, heads) {
+function findDots(mask, width, height, staff, heads) {
   const f = staffFrame(staff)
   const halfH = Math.max(2, Math.round(f.spacing * 0.28))
   const maxH = Math.max(2, Math.round(f.spacing * 0.42))

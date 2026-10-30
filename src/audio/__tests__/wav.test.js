@@ -13,11 +13,9 @@ function fakeBuffer(values, sampleRate = 8000) {
 describe('wav encoder', () => {
   it('encodes a mono buffer to a valid WAV file', async () => {
     const blob = audioBufferToWavBlob(fakeBuffer([0, 1, -1, 0.5]))
-    console.log('DEBUG blob type:', blob.type, 'size:', blob.size)
     expect(blob.type).toBe('audio/wav')
 
     const buf = new Uint8Array(await blob.arrayBuffer())
-    console.log('DEBUG byteLength:', buf.byteLength, 'bytes0-8:', Array.from(buf.slice(0, 8)).join(' '))
     const ascii = (o, n) => String.fromCharCode(...buf.subarray(o, o + n))
 
     expect(ascii(0, 4)).toBe('RIFF')

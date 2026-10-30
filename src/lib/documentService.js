@@ -9,7 +9,7 @@
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { textItemsToLines } from './pdfText.js'
-import { canvasFrom, createCanvas, rotateCanvas } from './scan/canvasTools.js'
+import { canvasFrom, canvasPreview, createCanvas, rotateCanvas } from './scan/canvasTools.js'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -17,11 +17,11 @@ const IMAGE_RE = /^image\//
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|bmp|gif|avif)$/i
 const PDF_RE = /^(application\/pdf|application\/x-pdf)$/i
 
-export function isPdfFile(file) {
+function isPdfFile(file) {
   return Boolean(file) && (PDF_RE.test(file.type || '') || /\.pdf$/i.test(file.name || ''))
 }
 
-export function isImageFile(file) {
+function isImageFile(file) {
   return Boolean(file) && (IMAGE_RE.test(file.type || '') || IMAGE_EXT_RE.test(file.name || ''))
 }
 
@@ -71,7 +71,6 @@ function imageDocument(image, file) {
     if (previews.has(key)) return previews.get(key)
     const rendered = canvasFrom(image, maxDimension)
     const page = makePage(rendered, rotation)
-    const { canvasPreview } = await import('./scan/canvasTools.js')
     const preview = await canvasPreview(page.canvas, { maxDimension })
     previews.set(key, preview)
     previewOrder.push(key)
@@ -159,7 +158,6 @@ async function pdfDocument(file, onProgress) {
     onProgress?.(`Rendering page ${index + 1} of ${pdf.numPages}…`)
     const rendered = await renderPage(index, maxDimension)
     const page = makePage(rendered, rotation)
-    const { canvasPreview } = await import('./scan/canvasTools.js')
     const preview = await canvasPreview(page.canvas, { maxDimension })
     previews.set(key, preview)
     previewOrder.push(key)

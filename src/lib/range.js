@@ -5,8 +5,8 @@ export function isWhiteKey(midi) {
 }
 
 export const RANGE_MIN = 24
-export const RANGE_MAX = 108
-export const MAX_WHITE_KEYS = 26
+const RANGE_MAX = 108
+const MAX_WHITE_KEYS = 26
 export const DEFAULT_RANGE = [48, 83]
 
 const pc = (m) => ((m % 12) + 12) % 12
