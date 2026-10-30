@@ -64,6 +64,28 @@ function write(sheets, store) {
 }
 
 /**
+ * Older versions copied starter sheets into the saved library. Remove only
+ * exact copies so a sheet the user edited and saved is never discarded.
+ */
+export function pruneBuiltInSamples(samples, store = defaultStorage()) {
+  const sheets = loadSheets(store)
+  if (!Array.isArray(samples) || samples.length === 0) return sheets
+  const next = sheets.filter(
+    (sheet) =>
+      !samples.some(
+        (sample) => sheet.name === sample.name && sheet.text === sample.text
+      )
+  )
+  if (next.length === sheets.length) return sheets
+  try {
+    write(next, store)
+  } catch {
+    return sheets
+  }
+  return next
+}
+
+/**
  * Store a sheet, newest first. Saving under a name that is already there
  * replaces it, so pressing Save twice updates one entry instead of piling up
  * copies.

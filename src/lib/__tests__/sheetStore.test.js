@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_SHEETS, deleteSheet, describeSheet, loadSheets, saveSheet } from '../sheetStore.js'
+import {
+  MAX_SHEETS,
+  deleteSheet,
+  describeSheet,
+  loadSheets,
+  pruneBuiltInSamples,
+  saveSheet,
+} from '../sheetStore.js'
 
 /** Minimal stand-in for localStorage. */
 function fakeStore(initial) {
@@ -145,6 +152,56 @@ describe('loadSheets', () => {
     }
 
     expect(loadSheets(broken)).toEqual([])
+  })
+})
+
+describe('pruneBuiltInSamples', () => {
+  const STARTER = { name: 'Abide with Me (Eventide)', text: 'Key: Eb\nDo Re Mi' }
+
+  it('removes exact copies of built-in starter sheets', () => {
+    const store = fakeStore()
+    saveSheet({ name: 'My song', text: 'Do Re' }, store)
+    saveSheet({ name: STARTER.name, text: STARTER.text }, store)
+
+    const sheets = pruneBuiltInSamples([STARTER], store)
+
+    expect(sheets.map((s) => s.name)).toEqual(['My song'])
+    expect(loadSheets(store).map((s) => s.name)).toEqual(['My song'])
+  })
+
+  it('keeps a changed copy with the same name', () => {
+    const store = fakeStore()
+    saveSheet({ name: STARTER.name, text: `${STARTER.text}\nDo` }, store)
+
+    const sheets = pruneBuiltInSamples([STARTER], store)
+
+    expect(sheets).toHaveLength(1)
+    expect(loadSheets(store)).toHaveLength(1)
+  })
+
+  it('leaves an unrelated library alone', () => {
+    const store = fakeStore()
+    saveSheet({ name: 'Mine', text: 'Do' }, store)
+
+    expect(pruneBuiltInSamples([STARTER], store).map((s) => s.name)).toEqual(['Mine'])
+  })
+
+  it('handles an empty starter list', () => {
+    const store = fakeStore()
+    saveSheet({ name: 'Mine', text: 'Do' }, store)
+
+    expect(pruneBuiltInSamples([], store).map((s) => s.name)).toEqual(['Mine'])
+  })
+
+  it('leaves the library alone when storage cannot be written', () => {
+    const store = fakeStore(
+      JSON.stringify([{ id: 'old', name: STARTER.name, text: STARTER.text, savedAt: 1 }])
+    )
+    store.setItem = () => {
+      throw new Error('quota exceeded')
+    }
+
+    expect(pruneBuiltInSamples([STARTER], store)).toHaveLength(1)
   })
 })
 

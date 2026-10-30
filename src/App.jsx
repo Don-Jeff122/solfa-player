@@ -3,6 +3,7 @@ import Controls from './components/Controls.jsx'
 import Piano from './components/Piano.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
 import SheetScanner from './components/SheetScanner.jsx'
+import StarterSheet from './components/StarterSheet.jsx'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -20,7 +21,12 @@ import {
   sequenceBeats,
   tonicMidiForKey,
 } from './lib/notes.js'
-import { deleteSheet, describeSheet, loadSheets, saveSheet } from './lib/sheetStore.js'
+import {
+  deleteSheet,
+  describeSheet,
+  pruneBuiltInSamples,
+  saveSheet,
+} from './lib/sheetStore.js'
 import { buildTimeline, timelineAt } from './lib/timeline.js'
 
 const nextFrame =
@@ -31,26 +37,6 @@ const cancelFrame =
   typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout
 const debugAudio =
   typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug')
-
-const BACKGROUND_PREF = 'solfa-piano.background.v1'
-
-function loadBackgroundPref() {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem(BACKGROUND_PREF) === '1'
-  } catch {
-    return false
-  }
-}
-
-function saveBackgroundPref(on) {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(BACKGROUND_PREF, on ? '1' : '0')
-    }
-  } catch {
-    /* storage may be blocked */
-  }
-}
 
 /**
  * Safari uses this to treat the page as media playback rather than a short
@@ -89,6 +75,12 @@ function mediaArtwork() {
 const DEFAULT_TEXT = `Key: C
 Do Do So So Re Re Do- Mi Mi Fa Fa So So Mi-
 La La So So Fa Fa Re- Do Do So So Re Re Do-`
+
+const STARTER_SHEETS = SAMPLE_SHEETS.map((sample) => ({
+  ...sample,
+  description: describeSheet(sample.text),
+}))
+const FEATURED_STARTER = STARTER_SHEETS[0] ?? null
 
 function SolfaChip({ note, current }) {
   const cls = `chip${current ? ' current' : ''}`
@@ -151,15 +143,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [audioStats, setAudioStats] = useState(null)
   const [audioError, setAudioError] = useState(null)
-  const [sheets, setSheets] = useState(() => {
-    const existing = loadSheets()
-    if (existing.length) return existing
-    let seeded = existing
-    for (const sample of SAMPLE_SHEETS) {
-      seeded = saveSheet({ name: sample.name, text: sample.text }).sheets
-    }
-    return seeded
-  })
+  const [sheets, setSheets] = useState(() => pruneBuiltInSamples(SAMPLE_SHEETS))
   const [sheetName, setSheetName] = useState('')
   const [savedMsg, setSavedMsg] = useState(null)
   const [voiceOctaves, setVoiceOctaves] = useState({})
@@ -167,16 +151,17 @@ export default function App() {
   const [sustain, setSustain] = useState(DEFAULT_SUSTAIN_ID)
   const [repeat, setRepeat] = useState(false)
   const [metronome, setMetronome] = useState(false)
-  const [background, setBackground] = useState(loadBackgroundPref)
-  const [bgStatus, setBgStatus] = useState(background ? 'stale' : 'off')
+  const [bgStatus, setBgStatus] = useState('stale')
   const [bgDuration, setBgDuration] = useState(0)
   const [position, setPosition] = useState(0)
   const [isPaused, setIsPaused] = useState(false)
+  const [liveFallback, setLiveFallback] = useState(false)
   const [textFocused, setTextFocused] = useState(false)
   const ring = sustainSeconds(sustain)
 
   const [synth] = useState(() => new Synth())
   const handleRef = useRef(null)
+  const textareaRef = useRef(null)
   const tapTimerRef = useRef(null)
   const wavUrlRef = useRef(null)
   const activeMidiRef = useRef(new Set())
@@ -189,7 +174,7 @@ export default function App() {
   const bgJobRef = useRef({ id: 0, key: null })
   const bgRetiredRef = useRef([])
   const suppressPauseRef = useRef(false)
-  const backgroundRef = useRef(background)
+  const pendingPlayRef = useRef(false)
   const backgroundKeyRef = useRef('')
   const backgroundPlaybackKeyRef = useRef(null)
   const mediaActionsRef = useRef({})
@@ -199,9 +184,6 @@ export default function App() {
   useEffect(() => {
     repeatRef.current = repeat
   }, [repeat])
-  useEffect(() => {
-    backgroundRef.current = background
-  }, [background])
 
   const parsed = useMemo(() => parseSolfa(text), [text])
   const result = parsed.ok ? parsed.result : null
@@ -226,6 +208,11 @@ export default function App() {
 
   // Shown as the placeholder so a sheet can be saved without typing a name.
   const sheetHint = useMemo(() => describeSheet(parsed), [parsed])
+
+  // Keep the callout focused on first-time users: hide it as soon as they load
+  // or save something, then let the always-visible library take over.
+  const showStarterBanner =
+    !!FEATURED_STARTER && sheets.length === 0 && text === DEFAULT_TEXT
 
   const partNames = useMemo(() => (result ? result.parts.map((p) => p.name) : []), [result])
 
@@ -310,7 +297,6 @@ export default function App() {
     [sequences, tempo]
   )
   backgroundKeyRef.current = backgroundKey
-  const backgroundPreparing = background && bgStatus === 'preparing'
 
   const cancelUiFrame = useCallback(() => {
     if (uiFrameRef.current) {
@@ -333,7 +319,7 @@ export default function App() {
       uiFrameRef.current = 0
       setActiveMidi(new Set(activeMidiRef.current))
       setNoteIndexes(noteIndexesRef.current.slice())
-      if (debugAudio && !background && synth.lastBudget) {
+      if (debugAudio && liveFallback && synth.lastBudget) {
         const b = synth.lastBudget
         setAudioStats({
           scheduled: b.scheduled,
@@ -344,9 +330,10 @@ export default function App() {
         })
       }
     })
-  }, [synth, background])
+  }, [synth, liveFallback])
 
   const stopPlayback = useCallback(() => {
+    pendingPlayRef.current = false
     backgroundPlaybackKeyRef.current = null
     if (handleRef.current) {
       handleRef.current.stop()
@@ -375,6 +362,7 @@ export default function App() {
     bgRetiredRef.current = []
     setIsPlaying(false)
     setIsPaused(false)
+    setLiveFallback(false)
     setPosition(0)
     resetUi()
   }, [resetUi])
@@ -435,6 +423,7 @@ export default function App() {
     handleRef.current = null
     resetUi()
     setAudioError(null)
+    setLiveFallback(true)
     try {
       const ctx = synth._ensureCtx?.() || synth.ctx
       if (ctx?.state === 'suspended' && ctx.resume) ctx.resume()
@@ -538,7 +527,6 @@ export default function App() {
    * seek until a setting that changes the sound changes.
    */
   const prepareBackground = useCallback(async () => {
-    if (!backgroundRef.current) return
     if (!sequences || !sequences.length || !(totalBeats > 0)) return
     const cached = bgCacheRef.current
     if (cached?.key === backgroundKey) {
@@ -559,11 +547,7 @@ export default function App() {
         sustain: ring,
         metronome,
       })
-      if (
-        bgJobRef.current.id !== id ||
-        !backgroundRef.current ||
-        backgroundKeyRef.current !== backgroundKey
-      ) {
+      if (bgJobRef.current.id !== id || backgroundKeyRef.current !== backgroundKey) {
         return
       }
       const url = URL.createObjectURL(audioBufferToWavBlob(buffer))
@@ -587,27 +571,22 @@ export default function App() {
     }
   }, [backgroundKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
 
-  const failBackgroundPlayback = useCallback(
-    (err) => {
-      backgroundPlaybackKeyRef.current = null
-      setAudioError(
-        err && err.message
-          ? `Background audio could not start: ${err.message}`
-          : 'Background audio could not start.'
-      )
-      setIsPlaying(false)
-      setIsPaused(false)
-      setAudioSessionType('auto')
-      resetUi()
-    },
-    [resetUi]
-  )
+  const failBackgroundPlayback = useCallback(() => {
+    backgroundPlaybackKeyRef.current = null
+    setIsPlaying(false)
+    setIsPaused(false)
+    setAudioSessionType('auto')
+    resetUi()
+    startLivePlayback()
+  }, [resetUi, startLivePlayback])
 
   const startBackgroundPlayback = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
     if (!audio || !cached || cached.key !== backgroundKey) return false
+    pendingPlayRef.current = false
     setAudioError(null)
+    setLiveFallback(false)
     setAudioSessionType('playback')
     audio.loop = repeatRef.current
     if (audio.src !== cached.url) {
@@ -651,7 +630,9 @@ export default function App() {
     const audio = audioRef.current
     const cached = bgCacheRef.current
     if (!audio || !cached || cached.key !== backgroundKey) return false
+    pendingPlayRef.current = false
     setAudioError(null)
+    setLiveFallback(false)
     setAudioSessionType('playback')
     audio.loop = repeatRef.current
     if (audio.src !== cached.url) {
@@ -725,6 +706,7 @@ export default function App() {
   const handleAudioPlay = useCallback(() => {
     // A fresh play is the point after which a pause is a real user pause.
     suppressPauseRef.current = false
+    setLiveFallback(false)
     setIsPlaying(true)
     setIsPaused(false)
     if (typeof navigator !== 'undefined' && navigator.mediaSession) {
@@ -753,6 +735,7 @@ export default function App() {
     backgroundPlaybackKeyRef.current = null
     setIsPlaying(false)
     setIsPaused(false)
+    setLiveFallback(false)
     setPosition(0)
     setAudioSessionType('auto')
     if (typeof navigator !== 'undefined' && navigator.mediaSession) {
@@ -774,73 +757,41 @@ export default function App() {
 
   const handleAudioError = useCallback(() => {
     backgroundPlaybackKeyRef.current = null
-    setAudioError('Background audio could not play. Try Record WAV or live playback.')
     setIsPlaying(false)
     setIsPaused(false)
     setAudioSessionType('auto')
     resetUi()
-  }, [resetUi])
+    startLivePlayback()
+  }, [resetUi, startLivePlayback])
 
   const startPlayback = useCallback(() => {
-    if (background) {
-      if (bgCacheRef.current?.key === backgroundKey) startBackgroundPlayback()
+    if (!liveFallback && bgCacheRef.current?.key === backgroundKey) {
+      startBackgroundPlayback()
       return
     }
     startLivePlayback()
-  }, [background, backgroundKey, startBackgroundPlayback, startLivePlayback])
+  }, [liveFallback, backgroundKey, startBackgroundPlayback, startLivePlayback])
 
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
   startRef.current = startPlayback
 
   const handlePlay = () => {
-    if (background) {
-      if (isPaused) {
-        if (bgCacheRef.current?.key === backgroundKey) {
-          resumeBackground()
-        } else {
-          stopPlayback()
-          prepareBackground()
-        }
-        return
-      }
-      if (bgCacheRef.current?.key === backgroundKey && bgStatus === 'ready') {
-        stopPlayback()
-        if (!startBackgroundPlayback()) prepareBackground()
-        return
-      }
-      if (bgStatus === 'error') {
-        stopPlayback()
-        startLivePlayback()
-        setAudioError('Background audio is unavailable, so playback is live only.')
-        return
-      }
-      prepareBackground()
+    if (isPaused && bgStatus !== 'error' && bgCacheRef.current?.key === backgroundKey) {
+      resumeBackground()
       return
     }
     stopPlayback()
-    startLivePlayback()
-  }
-
-  const handleBackground = (on) => {
-    if (on === background) return
-    if (isPlaying || isPaused) stopPlayback()
-    backgroundRef.current = on
-    if (on) {
-      const cached = bgCacheRef.current
-      if (cached?.key === backgroundKey) {
-        setBgStatus('ready')
-        setBgDuration(cached.duration)
-      } else {
-        setBgStatus('stale')
-      }
-    } else {
-      bgJobRef.current.id++
-      bgJobRef.current.key = null
-      setBgStatus('off')
+    if (bgStatus === 'error') {
+      startLivePlayback()
+      return
     }
-    setBackground(on)
-    saveBackgroundPref(on)
+    if (bgCacheRef.current?.key === backgroundKey) {
+      startBackgroundPlayback()
+      return
+    }
+    pendingPlayRef.current = true
+    prepareBackground()
   }
 
   mediaActionsRef.current = {
@@ -854,15 +805,11 @@ export default function App() {
   useEffect(() => {
     const audio = audioRef.current
     if (audio) audio.loop = repeat
-  }, [repeat, background])
+  }, [repeat])
 
   // Prepare ahead of time, but never while the editor is focused or a track is
   // already playing: typing should not start a series of expensive renders.
   useEffect(() => {
-    if (!background) {
-      setBgStatus('off')
-      return
-    }
     const cached = bgCacheRef.current
     if (cached?.key === backgroundKey) {
       setBgStatus('ready')
@@ -885,7 +832,6 @@ export default function App() {
     const timer = setTimeout(prepareBackground, 400)
     return () => clearTimeout(timer)
   }, [
-    background,
     backgroundKey,
     isPlaying,
     isPaused,
@@ -897,7 +843,25 @@ export default function App() {
   ])
 
   useEffect(() => {
-    if (!background || !isPlaying) return
+    pendingPlayRef.current = false
+  }, [backgroundKey])
+
+  useEffect(() => {
+    if (!pendingPlayRef.current) return
+    if (bgCacheRef.current?.key === backgroundKey && bgStatus === 'ready') {
+      pendingPlayRef.current = false
+      stopPlayback()
+      startBackgroundPlayback()
+      return
+    }
+    if (bgStatus === 'error') {
+      pendingPlayRef.current = false
+      startLivePlayback()
+    }
+  }, [backgroundKey, bgStatus, stopPlayback, startBackgroundPlayback, startLivePlayback])
+
+  useEffect(() => {
+    if (!isPlaying || liveFallback) return
     let frame = 0
     const tick = () => {
       const audio = audioRef.current
@@ -906,18 +870,10 @@ export default function App() {
     }
     frame = nextFrame(tick)
     return () => cancelFrame(frame)
-  }, [background, isPlaying, syncTimelineUi])
+  }, [isPlaying, liveFallback, syncTimelineUi])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.mediaSession) return
-    if (!background) {
-      try {
-        navigator.mediaSession.metadata = null
-      } catch {
-        /* unsupported */
-      }
-      return
-    }
     if (typeof MediaMetadata === 'undefined') return
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -929,7 +885,7 @@ export default function App() {
     } catch {
       /* metadata is optional */
     }
-  }, [background, sheetHint])
+  }, [sheetHint])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.mediaSession) return
@@ -1024,6 +980,15 @@ export default function App() {
   // button always does something useful.
   const handleSaveSheet = () => {
     const name = sheetName.trim() || sheetHint
+    const isStarterCopy = STARTER_SHEETS.some(
+      (starter) => starter.name === name && starter.text === text
+    )
+    if (isStarterCopy) {
+      setSavedMsg(
+        `“${name}” is a starter sheet and is always in the library. Edit it to save your own copy.`
+      )
+      return
+    }
     const { sheets: next, error: saveError } = saveSheet({ name, text })
     setSheets(next)
     setSheetName('')
@@ -1036,9 +1001,26 @@ export default function App() {
 
   const handleLoadSheet = (sheet) => {
     setText(sheet.text)
+    setPartSel(null)
     setError(null)
+    setAudioError(null)
     setVoiceOctaves({})
-    setSavedMsg(`Loaded “${sheet.name}”.`)
+    setSheetName(sheet.name)
+    setShowScanner(false)
+    const isStarter = STARTER_SHEETS.some((item) => item.id === sheet.id)
+    setSavedMsg(
+      isStarter
+        ? `Loaded starter sheet “${sheet.name}”.`
+        : `Loaded “${sheet.name}”.`
+    )
+    nextFrame(() => {
+      const editor = textareaRef.current
+      if (!editor || typeof window === 'undefined') return
+      const rect = editor.getBoundingClientRect()
+      if (rect.top < 0 || rect.bottom > window.innerHeight) {
+        editor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    })
   }
 
   const handleDeleteSheet = (id) => {
@@ -1106,7 +1088,11 @@ export default function App() {
               }}
             />
           )}
+          {showStarterBanner && (
+            <StarterSheet sheet={FEATURED_STARTER} onLoad={handleLoadSheet} featured />
+          )}
           <textarea
+            ref={textareaRef}
             className="solfa-input"
             value={text}
             onChange={(e) => {
@@ -1154,8 +1140,17 @@ export default function App() {
               Save
             </button>
           </div>
-          {savedMsg && <p className="meta-line">{savedMsg}</p>}
-          <SavedSheets sheets={sheets} onLoad={handleLoadSheet} onDelete={handleDeleteSheet} />
+          {savedMsg && (
+            <p className="meta-line saved-msg" role="status">
+              {savedMsg}
+            </p>
+          )}
+          <SavedSheets
+            sheets={sheets}
+            samples={STARTER_SHEETS}
+            onLoad={handleLoadSheet}
+            onDelete={handleDeleteSheet}
+          />
 
           {result && (
             <div className="preview">
@@ -1302,9 +1297,10 @@ export default function App() {
                 Switching it off mid-song lets the current pass finish.
               </li>
               <li>
-                <b>Background</b>: prepares the song once, then keeps it playing when you
-                switch tabs or apps, or lock the screen. Closing the tab still stops it; use{' '}
-                <code>Record WAV</code> and Download to keep a copy.
+                <b>Playback</b>: the audio track is prepared automatically before you press
+                Play, then keeps playing when you switch tabs or apps, or lock the screen.
+                Closing the tab still stops it; use <code>Record WAV</code> and Download to
+                keep a copy.
               </li>
               <li>
                 <b>Sustain</b>: the <code>Sustain</code> dropdown adds extra ring-out after each
@@ -1317,13 +1313,11 @@ export default function App() {
 
         <section className="card player-card">
           <Controls
-            canPlay={!!sequences && totalBeats > 0 && !backgroundPreparing}
+            canPlay={!!sequences && totalBeats > 0}
             isPlaying={isPlaying}
+            mediaPlayback={!liveFallback}
             onPlay={handlePlay}
             onStop={stopPlayback}
-            background={background}
-            onBackground={handleBackground}
-            backgroundPreparing={backgroundPreparing}
             isPaused={isPaused}
             onPause={pauseBackground}
             progress={position}
@@ -1381,28 +1375,32 @@ export default function App() {
             )}
             {!audioError && error && <span className="status-error">{error}</span>}
             {!error && rendering && <span className="status-busy">Rendering audio…</span>}
-            {!audioError && !error && background && bgStatus === 'preparing' && (
-              <span className="status-busy">Preparing background audio…</span>
+            {!audioError && !error && bgStatus === 'preparing' && (
+              <span className="status-busy">Preparing audio…</span>
             )}
-            {!audioError && !error && background && bgStatus === 'error' && (
+            {!audioError && !error && !liveFallback && bgStatus === 'error' && (
               <span className="status-error">
-                Could not prepare background audio. Play will use live mode.
+                Could not prepare audio. Play will use live mode.
+              </span>
+            )}
+            {!audioError && !error && liveFallback && isPlaying && (
+              <span className="status-busy">
+                Playing in live mode; background audio is unavailable.
               </span>
             )}
             {!audioError &&
               !error &&
-              background &&
               bgStatus === 'ready' &&
               !isPlaying &&
               !isPaused && (
-                <span className="status-ok">Background audio ready.</span>
+                <span className="status-ok">Audio ready.</span>
               )}
             {!error && !rendering && wavUrl && (
               <span className="status-ok">
                 Recording ready. Use “Download” to save the WAV.
               </span>
             )}
-            {debugAudio && !background && audioStats && (
+            {debugAudio && liveFallback && audioStats && (
               <span className="status-busy">
                 audio: {audioStats.scheduled} scheduled · {audioStats.droppedLate} dropped late ·{' '}
                 {audioStats.skipped} skipped · {audioStats.trimmed} trimmed · {audioStats.nodes}{' '}

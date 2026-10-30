@@ -15,11 +15,13 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
   voice, played together or soloed
 - On-screen piano keyboard, voice / sustain / tempo controls
 - Playback through a dependency-free Web Audio synth (no samples)
+- Audio is prepared automatically before Play and keeps playing when switching
+  tabs or apps, or locking the screen
 - Record and download a WAV of the playback
 - Scan a printed page or PDF with Tesseract (loaded on demand) and turn it
   into playable solfa
-- Sheets persist in the browser (`localStorage`); a fresh browser is seeded
-  with the built-in "Abide with Me" sample
+- Built-in "Abide with Me" starter sheet, always available, plus a visible
+  library of sheets saved in this browser (`localStorage`)
 
 ## Getting started
 

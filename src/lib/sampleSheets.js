@@ -10,5 +10,5 @@ S: r : m | f : m | r : d | f : m | r : d : -
 Abide with me; fast falls the eventide; the darkness deepens; Lord, with me abide.
 When other helpers fail and comforts flee; help of the helpless, O abide with me.`
 
-/** Built-in starter sheets, loaded into a fresh browser so music is one click away. */
+/** Built-in starter sheets, shown outside the user's saved library. */
 export const SAMPLE_SHEETS = [{ id: 'abide-with-me', name: 'Abide with Me (Eventide)', text: ABIDE_WITH_ME }]

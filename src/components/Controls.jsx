@@ -11,11 +11,9 @@ const octaveLabel = (n) => (n > 0 ? `+${n}` : String(n))
 export default function Controls({
   canPlay,
   isPlaying,
+  mediaPlayback,
   onPlay,
   onStop,
-  background,
-  onBackground,
-  backgroundPreparing,
   isPaused,
   onPause,
   progress,
@@ -57,7 +55,7 @@ export default function Controls({
         <div className="transport">
           {isPlaying ? (
             <>
-              {background && (
+              {mediaPlayback && (
                 <button
                   type="button"
                   className="btn btn-pause"
@@ -82,7 +80,7 @@ export default function Controls({
                 disabled={!canPlay}
               >
                 <span className="btn-icon play" />
-                {backgroundPreparing ? 'Preparing…' : isPaused ? 'Resume' : 'Play'}
+                {isPaused ? 'Resume' : 'Play'}
               </button>
               {isPaused && (
                 <button type="button" className="btn btn-stop" onClick={onStop}>
@@ -105,20 +103,6 @@ export default function Controls({
           >
             <span className="btn-icon repeat" />
             Repeat
-          </button>
-          <button
-            type="button"
-            className={`btn btn-background${background ? ' active' : ''}`}
-            onClick={() => onBackground(!background)}
-            aria-pressed={background}
-            title={
-              background
-                ? 'On: keeps playing in another tab/app or with the screen locked'
-                : 'Off: live playback only. Turn on to keep playing in the background'
-            }
-          >
-            <span className="btn-icon background" />
-            Background
           </button>
           <button
             type="button"
@@ -175,7 +159,7 @@ export default function Controls({
           />
         </div>
       </div>
-      {background && duration > 0 && (isPlaying || isPaused) && (
+      {mediaPlayback && duration > 0 && (isPlaying || isPaused) && (
         <div className="progress-row">
           <span className="time">{formatClock(progress)}</span>
           <input
