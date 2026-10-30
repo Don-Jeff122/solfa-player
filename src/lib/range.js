@@ -1,7 +1,19 @@
 const BLACK_PCS = [1, 3, 6, 8, 10]
 
+export const BLACK_KEY_WIDTH_RATIO = 0.62
+
 export function isWhiteKey(midi) {
   return !BLACK_PCS.includes(((midi % 12) + 12) % 12)
+}
+
+/**
+ * Horizontal offset for a black key, as a percentage of the keyboard width.
+ * `afterWhite` is the number of white keys to the left of the black key, so the
+ * key is centred on the boundary after that white key.
+ */
+export function blackKeyLeft(afterWhite, whiteCount, blackWidthRatio = BLACK_KEY_WIDTH_RATIO) {
+  const whitePct = 100 / whiteCount
+  return afterWhite * whitePct - (whitePct * blackWidthRatio) / 2
 }
 
 export const RANGE_MIN = 24

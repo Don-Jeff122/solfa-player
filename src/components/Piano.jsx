@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { midiName, solfaForMidi } from '../lib/notes.js'
-import { fitRange } from '../lib/range.js'
+import { BLACK_KEY_WIDTH_RATIO, blackKeyLeft, fitRange } from '../lib/range.js'
 
 export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNotes = [] }) {
   const { whiteKeys, blackKeys, start, end } = useMemo(() => {
@@ -20,7 +20,7 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
 
   const active = activeMidi || new Set()
   const whitePct = 100 / whiteKeys.length
-  const blackPct = whitePct * 0.62
+  const blackPct = whitePct * BLACK_KEY_WIDTH_RATIO
 
   const label = (midi) => ({
     solfa: solfaForMidi(midi, tonicMidi),
@@ -63,7 +63,7 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
         })}
         {blackKeys.map(({ midi, afterWhite }) => {
           const { solfa, name } = label(midi)
-          const left = afterWhite * whitePct + whitePct - blackPct / 2
+          const left = blackKeyLeft(afterWhite, whiteKeys.length)
           return (
             <button
               key={midi}

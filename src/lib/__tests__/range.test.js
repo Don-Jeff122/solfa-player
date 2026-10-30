@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RANGE, isWhiteKey, fitRange, RANGE_MIN } from '../range.js'
+import {
+  BLACK_KEY_WIDTH_RATIO,
+  DEFAULT_RANGE,
+  blackKeyLeft,
+  isWhiteKey,
+  fitRange,
+  RANGE_MIN,
+} from '../range.js'
 import { MIDI_FLOOR } from '../notes.js'
 
 const countWhite = (lo, hi) => {
@@ -17,6 +24,16 @@ describe('piano range fitting', () => {
     expect(isWhiteKey(69)).toBe(true)
     expect(isWhiteKey(70)).toBe(false)
     expect(isWhiteKey(66)).toBe(false)
+  })
+
+  it('centers each black key on the boundary after its white key', () => {
+    const whiteCount = 7
+    const whitePct = 100 / whiteCount
+    const blackPct = whitePct * BLACK_KEY_WIDTH_RATIO
+    for (const afterWhite of [1, 2, 4, 5, 6]) {
+      const center = blackKeyLeft(afterWhite, whiteCount) + blackPct / 2
+      expect(center).toBeCloseTo(afterWhite * whitePct)
+    }
   })
 
   it('defaults to a three-octave range for empty input', () => {
