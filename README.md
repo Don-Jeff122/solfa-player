@@ -20,8 +20,8 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
 - Record and download a WAV of the playback
 - Scan a printed page or PDF with Tesseract (loaded on demand) and turn it
   into playable solfa
-- Built-in "Abide with Me" starter sheet, always available, plus a visible
-  library of sheets saved in this browser (`localStorage`)
+- A visible library of sheets saved in this browser (`localStorage`), with
+  update, copy, replace and delete-undo actions
 
 ## Getting started
 

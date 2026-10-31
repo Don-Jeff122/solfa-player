@@ -1,14 +1,28 @@
-import StarterSheet from './StarterSheet.jsx'
-
 function whenSaved(timestamp) {
   if (!timestamp) return ''
   const date = new Date(timestamp)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const days = Math.round((startOfToday - startOfDate) / 86400000)
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days > 1 && days < 7) return `${days} days ago`
+  const options = { day: 'numeric', month: 'short' }
+  if (date.getFullYear() !== now.getFullYear()) options.year = 'numeric'
+  return date.toLocaleDateString(undefined, options)
 }
 
-/** The built-in starter sheet plus the library kept in this browser. */
-export default function SavedSheets({ sheets, samples = [], onLoad, onDelete }) {
+/** The library of sheets kept in this browser. */
+export default function SavedSheets({
+  sheets,
+  activeId,
+  undo,
+  onLoad,
+  onDelete,
+  onUndoDelete,
+}) {
   return (
     <section className="library" aria-labelledby="sheet-library-title">
       <div className="library-head">
@@ -19,30 +33,27 @@ export default function SavedSheets({ sheets, samples = [], onLoad, onDelete }) 
         <span className="library-count">{sheets.length} saved</span>
       </div>
 
-      {samples.length > 0 && (
-        <div className="starter-list">
-          {samples.map((sample) => (
-            <StarterSheet key={sample.id} sheet={sample} onLoad={onLoad} />
-          ))}
-        </div>
-      )}
-
       {sheets.length === 0 ? (
         <p className="saved-empty">
-          No saved sheets yet. Load the starter sheet above, or name your sheet and press <b>Save</b>{' '}
-          to keep it here.
+          No saved sheets yet. Save a sheet to keep it in this browser.
         </p>
       ) : (
         <ul className="saved-list" aria-label="Saved sheets">
           {sheets.map((sheet) => {
+            const isActive = sheet.id === activeId
             const saved = whenSaved(sheet.savedAt)
+            const meta = isActive ? `${saved ? `${saved} · ` : ''}Loaded` : saved
             return (
-              <li className="saved-item" key={sheet.id}>
+              <li
+                className={`saved-item${isActive ? ' active' : ''}`}
+                key={sheet.id}
+                aria-current={isActive ? 'true' : undefined}
+              >
                 <div className="saved-copy">
                   <span className="saved-name" title={sheet.name}>
                     {sheet.name}
                   </span>
-                  {saved && <span className="saved-when">{saved}</span>}
+                  {meta && <span className="saved-when">{meta}</span>}
                 </div>
                 <div className="saved-actions">
                   <button
@@ -66,6 +77,15 @@ export default function SavedSheets({ sheets, samples = [], onLoad, onDelete }) 
             )
           })}
         </ul>
+      )}
+
+      {undo && (
+        <div className="library-undo" role="status">
+          <span>Deleted “{undo.sheet.name}”.</span>
+          <button type="button" className="library-undo-btn" onClick={onUndoDelete}>
+            Undo
+          </button>
+        </div>
       )}
     </section>
   )

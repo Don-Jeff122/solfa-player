@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
 import Piano from './components/Piano.jsx'
+import SaveSheet from './components/SaveSheet.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
 import SheetScanner from './components/SheetScanner.jsx'
-import StarterSheet from './components/StarterSheet.jsx'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -13,7 +13,6 @@ import {
 } from './audio/voices.js'
 import { audioBufferToWavBlob } from './audio/wav.js'
 import { parseSolfa } from './lib/parseSolfa.js'
-import { SAMPLE_SHEETS } from './lib/sampleSheets.js'
 import {
   buildSequences,
   clampVoiceOctave,
@@ -24,8 +23,10 @@ import {
 import {
   deleteSheet,
   describeSheet,
-  pruneBuiltInSamples,
+  loadSheets,
+  restoreSheet,
   saveSheet,
+  uniqueSheetName,
 } from './lib/sheetStore.js'
 import { buildTimeline, timelineAt } from './lib/timeline.js'
 
@@ -75,12 +76,6 @@ function mediaArtwork() {
 const DEFAULT_TEXT = `Key: C
 Do Do So So Re Re Do- Mi Mi Fa Fa So So Mi-
 La La So So Fa Fa Re- Do Do So So Re Re Do-`
-
-const STARTER_SHEETS = SAMPLE_SHEETS.map((sample) => ({
-  ...sample,
-  description: describeSheet(sample.text),
-}))
-const FEATURED_STARTER = STARTER_SHEETS[0] ?? null
 
 function SolfaChip({ note, current }) {
   const cls = `chip${current ? ' current' : ''}`
@@ -143,9 +138,12 @@ export default function App() {
   const [error, setError] = useState(null)
   const [audioStats, setAudioStats] = useState(null)
   const [audioError, setAudioError] = useState(null)
-  const [sheets, setSheets] = useState(() => pruneBuiltInSamples(SAMPLE_SHEETS))
+  const [sheets, setSheets] = useState(() => loadSheets())
   const [sheetName, setSheetName] = useState('')
   const [savedMsg, setSavedMsg] = useState(null)
+  const [activeSheet, setActiveSheet] = useState(null)
+  const [pendingSave, setPendingSave] = useState(null)
+  const [undoDelete, setUndoDelete] = useState(null)
   const [voiceOctaves, setVoiceOctaves] = useState({})
   const [sound, setSound] = useState(DEFAULT_VOICE_ID)
   const [sustain, setSustain] = useState(DEFAULT_SUSTAIN_ID)
@@ -184,6 +182,11 @@ export default function App() {
   useEffect(() => {
     repeatRef.current = repeat
   }, [repeat])
+  useEffect(() => {
+    if (!undoDelete) return undefined
+    const timer = setTimeout(() => setUndoDelete(null), 8000)
+    return () => clearTimeout(timer)
+  }, [undoDelete])
 
   const parsed = useMemo(() => parseSolfa(text), [text])
   const result = parsed.ok ? parsed.result : null
@@ -209,10 +212,38 @@ export default function App() {
   // Shown as the placeholder so a sheet can be saved without typing a name.
   const sheetHint = useMemo(() => describeSheet(parsed), [parsed])
 
-  // Keep the callout focused on first-time users: hide it as soon as they load
-  // or save something, then let the always-visible library take over.
-  const showStarterBanner =
-    !!FEATURED_STARTER && sheets.length === 0 && text === DEFAULT_TEXT
+  const trimmedName = sheetName.trim()
+  const effectiveName = trimmedName || sheetHint
+  const matchingSheet =
+    sheets.find((sheet) => sheet.name.toLowerCase() === effectiveName.toLowerCase()) ?? null
+  const activeId = activeSheet?.id ?? null
+  const isSaved =
+    !!activeSheet && text === activeSheet.text && effectiveName === activeSheet.name
+  const nameChanged =
+    !!activeSheet && effectiveName.toLowerCase() !== activeSheet.name.toLowerCase()
+  const willReplace = !!matchingSheet && matchingSheet.id !== activeId
+  const canSave = !!text.trim() && !isSaved
+  const canSaveCopy = !!text.trim() && !isSaved && (!!activeSheet || !!pendingSave)
+  const saveLabel = isSaved
+    ? 'Saved'
+    : willReplace
+      ? 'Replace'
+      : activeSheet && nameChanged
+        ? 'Save as copy'
+        : activeSheet
+          ? 'Update'
+          : 'Save'
+  const saveStatus = (() => {
+    if (pendingSave) return { tone: 'warn', label: 'Needs confirmation' }
+    if (activeSheet) {
+      return isSaved
+        ? { tone: 'saved', label: 'Saved' }
+        : { tone: 'unsaved', label: 'Unsaved changes' }
+    }
+    if (text === DEFAULT_TEXT) return { tone: 'muted', label: 'Example sheet' }
+    if (text.trim()) return { tone: 'unsaved', label: 'Not saved' }
+    return { tone: 'muted', label: 'Nothing to save' }
+  })()
 
   const partNames = useMemo(() => (result ? result.parts.map((p) => p.name) : []), [result])
 
@@ -976,27 +1007,62 @@ export default function App() {
     tapTimerRef.current = setTimeout(() => setActiveMidi(new Set()), 280)
   }
 
-  // Saving without a name falls back to a description of the sheet, so the
-  // button always does something useful.
-  const handleSaveSheet = () => {
-    const name = sheetName.trim() || sheetHint
-    const isStarterCopy = STARTER_SHEETS.some(
-      (starter) => starter.name === name && starter.text === text
-    )
-    if (isStarterCopy) {
+  const commitSheetSave = (name, { copy = false, replace = false } = {}) => {
+    const { sheets: next, saved, error: saveError } = saveSheet({ name, text })
+    if (saveError) {
       setSavedMsg(
-        `“${name}” is a starter sheet and is always in the library. Edit it to save your own copy.`
+        saveError === 'storage'
+          ? 'Could not save. This browser is blocking storage.'
+          : 'Add some notes before saving.'
       )
       return
     }
-    const { sheets: next, error: saveError } = saveSheet({ name, text })
     setSheets(next)
-    setSheetName('')
+    setSheetName(saved.name)
+    setActiveSheet({
+      id: saved.id,
+      name: saved.name,
+      text: saved.text,
+      savedAt: saved.savedAt,
+    })
+    setPendingSave(null)
     setSavedMsg(
-      saveError === 'storage'
-        ? 'Could not save. This browser is blocking storage.'
-        : `Saved “${name}”.`
+      copy
+        ? `Saved copy “${saved.name}”.`
+        : replace
+          ? `Replaced “${saved.name}”.`
+          : activeSheet?.id === saved.id
+            ? `Updated “${saved.name}”.`
+            : `Saved “${saved.name}”.`
     )
+  }
+
+  // Saving without a name falls back to a description of the sheet, so the
+  // button always does something useful.
+  const handleSaveSheet = () => {
+    if (!text.trim()) {
+      setSavedMsg('Add some notes before saving.')
+      return
+    }
+    const name = effectiveName
+    if (willReplace) {
+      setPendingSave({ name })
+      setSavedMsg(null)
+      return
+    }
+    commitSheetSave(name, { copy: nameChanged })
+  }
+
+  const handleSaveCopy = () => {
+    if (!text.trim()) return
+    const base = trimmedName || activeSheet?.name || sheetHint
+    const name = uniqueSheetName(base, sheets)
+    commitSheetSave(name, { copy: true })
+  }
+
+  const handleReplaceSheet = () => {
+    if (!pendingSave) return
+    commitSheetSave(pendingSave.name, { replace: true })
   }
 
   const handleLoadSheet = (sheet) => {
@@ -1007,12 +1073,14 @@ export default function App() {
     setVoiceOctaves({})
     setSheetName(sheet.name)
     setShowScanner(false)
-    const isStarter = STARTER_SHEETS.some((item) => item.id === sheet.id)
-    setSavedMsg(
-      isStarter
-        ? `Loaded starter sheet “${sheet.name}”.`
-        : `Loaded “${sheet.name}”.`
-    )
+    setPendingSave(null)
+    setActiveSheet({
+      id: sheet.id,
+      name: sheet.name,
+      text: sheet.text,
+      savedAt: sheet.savedAt,
+    })
+    setSavedMsg(`Loaded “${sheet.name}”.`)
     nextFrame(() => {
       const editor = textareaRef.current
       if (!editor || typeof window === 'undefined') return
@@ -1024,8 +1092,40 @@ export default function App() {
   }
 
   const handleDeleteSheet = (id) => {
-    setSheets(deleteSheet(id))
-    setSavedMsg('Sheet deleted.')
+    const index = sheets.findIndex((sheet) => sheet.id === id)
+    const sheet = index >= 0 ? sheets[index] : null
+    if (!sheet) return
+    const next = deleteSheet(id)
+    if (next.length === sheets.length) {
+      setSavedMsg('Could not delete this sheet. This browser is blocking storage.')
+      return
+    }
+    const wasActive = activeSheet?.id === id
+    setSheets(next)
+    setUndoDelete({ sheet, index, wasActive })
+    setPendingSave(null)
+    setSavedMsg(null)
+    if (wasActive) setActiveSheet(null)
+  }
+
+  const handleUndoDelete = () => {
+    if (!undoDelete) return
+    const next = restoreSheet(undoDelete.sheet, undoDelete.index)
+    if (!next.some((sheet) => sheet.id === undoDelete.sheet.id)) {
+      setSavedMsg('Could not restore this sheet.')
+      return
+    }
+    setSheets(next)
+    if (undoDelete.wasActive && !activeSheet && text === undoDelete.sheet.text) {
+      setActiveSheet({
+        id: undoDelete.sheet.id,
+        name: undoDelete.sheet.name,
+        text: undoDelete.sheet.text,
+        savedAt: undoDelete.sheet.savedAt,
+      })
+    }
+    setSavedMsg(`Restored “${undoDelete.sheet.name}”.`)
+    setUndoDelete(null)
   }
 
   const partLabel = allSelected
@@ -1070,6 +1170,9 @@ export default function App() {
                   setText(DEFAULT_TEXT)
                   setError(null)
                   setSavedMsg(null)
+                  setSheetName('')
+                  setActiveSheet(null)
+                  setPendingSave(null)
                 }}
               >
                 Reset example
@@ -1084,12 +1187,12 @@ export default function App() {
                 if (scannedKey) setUiKey(scannedKey)
                 setError(null)
                 setSavedMsg(null)
+                setSheetName('')
+                setActiveSheet(null)
+                setPendingSave(null)
                 setShowScanner(false)
               }}
             />
-          )}
-          {showStarterBanner && (
-            <StarterSheet sheet={FEATURED_STARTER} onLoad={handleLoadSheet} featured />
           )}
           <textarea
             ref={textareaRef}
@@ -1099,6 +1202,7 @@ export default function App() {
               setText(e.target.value)
               setError(null)
               setSavedMsg(null)
+              setPendingSave(null)
             }}
             onFocus={() => setTextFocused(true)}
             onBlur={() => setTextFocused(false)}
@@ -1116,40 +1220,35 @@ export default function App() {
             </div>
           )}
 
-          <div className="save-row">
-            <input
-              className="save-name"
-              value={sheetName}
-              onChange={(e) => setSheetName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  handleSaveSheet()
-                }
-              }}
-              placeholder={sheetHint}
-              aria-label="Name for saving this sheet"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              className="btn btn-small btn-primary"
-              onClick={handleSaveSheet}
-              disabled={!text.trim()}
-            >
-              Save
-            </button>
-          </div>
-          {savedMsg && (
-            <p className="meta-line saved-msg" role="status">
-              {savedMsg}
-            </p>
-          )}
+          <SaveSheet
+            name={sheetName}
+            placeholder={sheetHint}
+            status={saveStatus}
+            feedback={savedMsg}
+            canSave={canSave}
+            canSaveCopy={canSaveCopy}
+            saveLabel={saveLabel}
+            conflict={pendingSave ? { name: pendingSave.name } : null}
+            onNameChange={(value) => {
+              setSheetName(value)
+              setSavedMsg(null)
+              setPendingSave(null)
+            }}
+            onSave={handleSaveSheet}
+            onSaveCopy={handleSaveCopy}
+            onReplace={handleReplaceSheet}
+            onCancelReplace={() => {
+              setPendingSave(null)
+              setSavedMsg(null)
+            }}
+          />
           <SavedSheets
             sheets={sheets}
-            samples={STARTER_SHEETS}
+            activeId={activeId}
+            undo={undoDelete}
             onLoad={handleLoadSheet}
             onDelete={handleDeleteSheet}
+            onUndoDelete={handleUndoDelete}
           />
 
           {result && (

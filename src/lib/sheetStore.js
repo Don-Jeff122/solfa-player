@@ -63,26 +63,44 @@ function write(sheets, store) {
   store.setItem(STORAGE_KEY, JSON.stringify(sheets))
 }
 
-/**
- * Older versions copied starter sheets into the saved library. Remove only
- * exact copies so a sheet the user edited and saved is never discarded.
- */
-export function pruneBuiltInSamples(samples, store = defaultStorage()) {
+/** A free name for a copy, matching saved names case-insensitively. */
+export function uniqueSheetName(base, sheets) {
+  const trimmed = String(base ?? '').trim() || 'Untitled sheet'
+  const names = new Set(sheets.map((sheet) => sheet.name.toLowerCase()))
+  if (!names.has(trimmed.toLowerCase())) return trimmed
+  let copy = 1
+  while (true) {
+    const candidate = `${trimmed} (copy${copy === 1 ? '' : ` ${copy}`})`
+    if (!names.has(candidate.toLowerCase())) return candidate
+    copy += 1
+  }
+}
+
+/** Undo a delete by putting the sheet back where it was. */
+export function restoreSheet(sheet, index, store = defaultStorage()) {
+  if (!sheet || typeof sheet.name !== 'string' || typeof sheet.text !== 'string') {
+    return loadSheets(store)
+  }
   const sheets = loadSheets(store)
-  if (!Array.isArray(samples) || samples.length === 0) return sheets
-  const next = sheets.filter(
-    (sheet) =>
-      !samples.some(
-        (sample) => sheet.name === sample.name && sheet.text === sample.text
-      )
-  )
-  if (next.length === sheets.length) return sheets
+  if (sheets.some((s) => s.id === sheet.id)) return sheets
+  const entry = {
+    id: typeof sheet.id === 'string' && sheet.id ? sheet.id : newId(),
+    name: sheet.name,
+    text: sheet.text,
+    savedAt: typeof sheet.savedAt === 'number' ? sheet.savedAt : Date.now(),
+  }
+  const next = [...sheets]
+  const at = Number.isInteger(index)
+    ? Math.max(0, Math.min(index, next.length))
+    : next.length
+  next.splice(at, 0, entry)
+  const kept = next.slice(0, MAX_SHEETS)
   try {
-    write(next, store)
+    write(kept, store)
+    return kept
   } catch {
     return sheets
   }
-  return next
 }
 
 /**

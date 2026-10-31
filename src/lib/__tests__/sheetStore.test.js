@@ -4,8 +4,9 @@ import {
   deleteSheet,
   describeSheet,
   loadSheets,
-  pruneBuiltInSamples,
+  restoreSheet,
   saveSheet,
+  uniqueSheetName,
 } from '../sheetStore.js'
 
 /** Minimal stand-in for localStorage. */
@@ -155,53 +156,58 @@ describe('loadSheets', () => {
   })
 })
 
-describe('pruneBuiltInSamples', () => {
-  const STARTER = { name: 'Abide with Me (Eventide)', text: 'Key: Eb\nDo Re Mi' }
-
-  it('removes exact copies of built-in starter sheets', () => {
-    const store = fakeStore()
-    saveSheet({ name: 'My song', text: 'Do Re' }, store)
-    saveSheet({ name: STARTER.name, text: STARTER.text }, store)
-
-    const sheets = pruneBuiltInSamples([STARTER], store)
-
-    expect(sheets.map((s) => s.name)).toEqual(['My song'])
-    expect(loadSheets(store).map((s) => s.name)).toEqual(['My song'])
+describe('uniqueSheetName', () => {
+  it('returns the name when it is free', () => {
+    expect(uniqueSheetName('New song', [{ name: 'Other' }])).toBe('New song')
   })
 
-  it('keeps a changed copy with the same name', () => {
-    const store = fakeStore()
-    saveSheet({ name: STARTER.name, text: `${STARTER.text}\nDo` }, store)
-
-    const sheets = pruneBuiltInSamples([STARTER], store)
-
-    expect(sheets).toHaveLength(1)
-    expect(loadSheets(store)).toHaveLength(1)
+  it('adds a copy suffix case-insensitively', () => {
+    expect(uniqueSheetName('New song', [{ name: 'new SONG' }])).toBe('New song (copy)')
   })
 
-  it('leaves an unrelated library alone', () => {
-    const store = fakeStore()
-    saveSheet({ name: 'Mine', text: 'Do' }, store)
+  it('increments the copy suffix until it is free', () => {
+    const sheets = [{ name: 'Song' }, { name: 'Song (copy)' }, { name: 'Song (copy 2)' }]
 
-    expect(pruneBuiltInSamples([STARTER], store).map((s) => s.name)).toEqual(['Mine'])
+    expect(uniqueSheetName('Song', sheets)).toBe('Song (copy 3)')
   })
 
-  it('handles an empty starter list', () => {
-    const store = fakeStore()
-    saveSheet({ name: 'Mine', text: 'Do' }, store)
+  it('falls back to a readable name for a blank base', () => {
+    expect(uniqueSheetName('  ', [])).toBe('Untitled sheet')
+  })
+})
 
-    expect(pruneBuiltInSamples([], store).map((s) => s.name)).toEqual(['Mine'])
+describe('restoreSheet', () => {
+  it('puts a deleted sheet back at its original position', () => {
+    const store = fakeStore()
+    const one = saveSheet({ name: 'One', text: 'Do' }, store).saved
+    const two = saveSheet({ name: 'Two', text: 'Re' }, store).saved
+    saveSheet({ name: 'Three', text: 'Mi' }, store)
+    deleteSheet(two.id, store)
+
+    const restored = restoreSheet(two, 1, store)
+
+    expect(restored.map((s) => s.name)).toEqual(['Three', 'Two', 'One'])
+    expect(restored[1]).toEqual(two)
+    expect(one.id).toBe(restored[2].id)
+  })
+
+  it('does not duplicate a sheet that is already back', () => {
+    const store = fakeStore()
+    const saved = saveSheet({ name: 'Only', text: 'Do' }, store).saved
+
+    expect(restoreSheet(saved, 0, store)).toHaveLength(1)
   })
 
   it('leaves the library alone when storage cannot be written', () => {
-    const store = fakeStore(
-      JSON.stringify([{ id: 'old', name: STARTER.name, text: STARTER.text, savedAt: 1 }])
-    )
+    const store = fakeStore()
+    const saved = saveSheet({ name: 'Only', text: 'Do' }, store).saved
+    deleteSheet(saved.id, store)
     store.setItem = () => {
       throw new Error('quota exceeded')
     }
 
-    expect(pruneBuiltInSamples([STARTER], store)).toHaveLength(1)
+    expect(restoreSheet(saved, 0, store)).toHaveLength(0)
+    expect(loadSheets(store)).toHaveLength(0)
   })
 })
 
