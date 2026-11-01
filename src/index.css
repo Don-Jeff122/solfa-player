@@ -2084,6 +2084,8 @@ user-select: none;
   overflow-y: hidden;
   padding-bottom: 6px;
   scrollbar-width: thin;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
 }
 
 .piano-scroll::-webkit-scrollbar {
@@ -2104,7 +2106,7 @@ user-select: none;
   border: none;
   padding: 0;
   cursor: pointer;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y;
   -webkit-tap-highlight-color: transparent;
   -webkit-user-select: none;
   -webkit-touch-callout: none;

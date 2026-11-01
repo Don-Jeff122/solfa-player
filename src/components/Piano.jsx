@@ -1,8 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { midiName, solfaForMidi } from '../lib/notes.js'
 import { BLACK_KEY_WIDTH_RATIO, blackKeyLeft, fitRange } from '../lib/range.js'
 
 export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNotes = [] }) {
+  const pressedRef = useRef(new Map())
+  const [pressed, setPressed] = useState(() => new Set())
+
   const { whiteKeys, blackKeys, start, end } = useMemo(() => {
     const [startMidi, endMidi] = fitRange(midiNotes)
     const white = []
@@ -18,7 +21,11 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
     return { whiteKeys: white, blackKeys: black, start: startMidi, end: endMidi }
   }, [midiNotes])
 
-  const active = activeMidi || new Set()
+  const active = useMemo(() => {
+    const notes = new Set(activeMidi || [])
+    for (const midi of pressed) notes.add(midi)
+    return notes
+  }, [activeMidi, pressed])
   const whitePct = 100 / whiteKeys.length
   const blackPct = whitePct * BLACK_KEY_WIDTH_RATIO
 
@@ -26,6 +33,20 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
     solfa: solfaForMidi(midi, tonicMidi),
     name: midiName(midi),
   })
+
+  const pressKey = (event, midi) => {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    pressedRef.current.set(event.pointerId, midi)
+    setPressed(new Set(pressedRef.current.values()))
+    if (onPlayNote) onPlayNote(midi)
+  }
+
+  const releaseKey = (event) => {
+    if (!pressedRef.current.has(event.pointerId)) return
+    pressedRef.current.delete(event.pointerId)
+    setPressed(new Set(pressedRef.current.values()))
+  }
 
   return (
     <div className="piano-case" aria-label="Piano keyboard">
@@ -50,10 +71,11 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
               type="button"
               className={`key white${active.has(midi) ? ' active' : ''}`}
               style={{ width: `${whitePct}%` }}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                if (onPlayNote) onPlayNote(midi)
-              }}
+              onPointerDown={(e) => pressKey(e, midi)}
+              onPointerUp={releaseKey}
+              onPointerCancel={releaseKey}
+              onLostPointerCapture={releaseKey}
+              onPointerLeave={releaseKey}
               aria-label={`${name}${solfa ? ` (${solfa})` : ''}`}
             >
               <span className="key-solfa">{solfa}</span>
@@ -70,10 +92,11 @@ export default function Piano({ activeMidi, tonicMidi = 60, onPlayNote, midiNote
               type="button"
               className={`key black${active.has(midi) ? ' active' : ''}`}
               style={{ left: `${left}%`, width: `${blackPct}%` }}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                if (onPlayNote) onPlayNote(midi)
-              }}
+              onPointerDown={(e) => pressKey(e, midi)}
+              onPointerUp={releaseKey}
+              onPointerCancel={releaseKey}
+              onLostPointerCapture={releaseKey}
+              onPointerLeave={releaseKey}
               aria-label={`${name}${solfa ? ` (${solfa})` : ''}`}
             >
               <span className="key-pc">{name}</span>
