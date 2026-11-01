@@ -665,7 +665,15 @@ summary,
 
   .save-actions .btn-primary {
     flex: 0 0 auto;
-    min-width: 64px;
+    order: 1;
+    min-width: 72px;
+    margin-left: auto;
+  }
+
+  .save-conflict-actions .btn-danger {
+    order: 1;
+    min-width: 72px;
+    margin-left: auto;
   }
 }
 
