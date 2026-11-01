@@ -651,15 +651,24 @@ summary,
   outline-offset: 3px;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 768px) {
   .save-actions {
-    flex-direction: column;
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .save-actions .btn {
-    width: 100%;
+    flex: 0 0 auto;
+    width: auto;
   }
 
+  .save-actions .btn-primary {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
   .saved-item {
     align-items: flex-start;
     flex-wrap: wrap;
