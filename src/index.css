@@ -209,7 +209,7 @@ summary,
 /* ---------- preview chips ---------- */
 
 .preview {
-  margin-top: 14px;
+  margin-top: 18px;
   max-height: 220px;
   overflow-y: auto;
   padding-right: 4px;
@@ -219,7 +219,7 @@ summary,
   display: flex;
   gap: 8px;
   align-items: baseline;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .chip-label {
@@ -235,7 +235,7 @@ summary,
 .chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 8px;
 }
 
 .chip {
