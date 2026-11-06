@@ -85,6 +85,15 @@ describe('Gemini ScanResults', () => {
     expect(html).not.toContain('Playable interpretation')
   })
 
+  it('disables the player action while a sheet needs correction', () => {
+    const html = renderResult({
+      parseError: 'Unrecognized note "n" on line 14 (part "Bass").',
+    })
+
+    expect(html).toContain('needs correction')
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Use sheet in player<\/button>/)
+  })
+
   it('shows general document text without player actions', () => {
     const textPage = geminiPage({
       exactText: 'First line\nSecond line',

@@ -89,6 +89,32 @@ describe('Gemini page conversion', () => {
     expect(merged.sheetText).toContain('Mon-kam- fo Nyan-ko-pɔn')
   })
 
+  it('marks an invalid Gemini note as needing correction', () => {
+    const checked = normalizeGeminiResult({
+      ...solfa,
+      systems: [
+        {
+          rows: [
+            { voice: 'S', cells: ['d :d | r :r'] },
+            { voice: 'A', cells: ['s :s | l :l'] },
+            { voice: 'T', cells: ['m :m | f :f'] },
+            { voice: 'B', cells: ['d :d | n :n'] },
+          ],
+          lyrics: [],
+        },
+      ],
+    })
+    const converted = createGeminiHymnalPage(1, checked.value)
+
+    expect(converted.ok).toBe(true)
+    expect(converted.page.playable.parseError).toMatch(/Unrecognized note "n"/)
+    expect(converted.page.playable.warnings.join(' ')).toMatch(/Check the notes/)
+
+    const merged = mergeGeminiSolfaPages([converted.page])
+    expect(merged.parseError).toMatch(/Unrecognized note "n"/)
+    expect(merged.warnings.join(' ')).toMatch(/Check the notes/)
+  })
+
   it('does not turn a text result into a solfa page', () => {
     const converted = createGeminiHymnalPage(1, {
       ...solfa,

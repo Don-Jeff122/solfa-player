@@ -98,10 +98,15 @@ Gemini processes the page on Google's servers. The app sends only the current
 page, after confirmation, and does not save images on the proxy. If the Gemini
 API key uses the free tier, Google may use submitted content to improve its
 products; use a paid key if that is not acceptable. The Worker uses the current
-Interactions API schema, falls back through `gemini-3.5-flash-lite`,
-`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.6-flash` and
-`gemini-3.7-flash` when `gemini-3.8-flash` is busy or rate limited, and keeps
-the API key and prompts off the browser.
+Interactions API schema and keeps the API key and prompts off the browser.
+
+For Solfa transcription it tries `gemini-3.8-flash`, `gemini-3.6-flash`,
+`gemini-3.7-flash` and `gemini-3-flash-preview` before the lite models, because
+notation accuracy matters more than the cheapest fallback. The Worker validates
+the returned rows with the same parser as the player. If a model returns
+unsupported notation, it retries the next model; if every model fails, it
+returns the last editable sheet with a correction warning instead of silently
+guessing notes. General document mode keeps the lighter fallback order.
 
 ## Layout
 
@@ -115,6 +120,7 @@ the API key and prompts off the browser.
 - `src/lib/scan/geminiService.js`: Gemini consent, request and result validation
 - `src/lib/scan/geminiResults.js`: combines per-page Gemini results
 - `src/lib/scan/geminiSheet.js`: Gemini sheet assembly helpers
+- `src/lib/scan/solfaValidation.js`: shared notation checker for the app and Worker
 - `worker/gemini-proxy.js`: owner-hosted Cloudflare Worker that keeps the Gemini
   key off the client and builds the structured request
 - `src/components/scanner/GeminiDialog.jsx`: first-use consent and Gemini

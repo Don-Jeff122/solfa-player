@@ -71,6 +71,7 @@ export default function ScanResults({
   const exact = pageText(page, generalMode)
   const lineCount = allText.split('\n').filter(Boolean).length
   const key = result?.key
+  const needsCorrection = !generalMode && Boolean(result?.parseError)
 
   async function copy(label, text) {
     if (!text) return
@@ -131,8 +132,16 @@ export default function ScanResults({
               {lineCount} line{lineCount === 1 ? '' : 's'}
             </span>
             {key && <span className="tag">key {key}</span>}
-            <span className={generalMode ? 'tag' : 'tag good'}>
-              {generalMode ? 'document text' : 'solfa sheet'}
+            <span
+              className={
+                generalMode ? 'tag' : needsCorrection ? 'tag warn' : 'tag good'
+              }
+            >
+              {generalMode
+                ? 'document text'
+                : needsCorrection
+                  ? 'needs correction'
+                  : 'solfa sheet'}
             </span>
           </div>
 
@@ -239,7 +248,7 @@ export default function ScanResults({
                     type="button"
                     className="btn btn-primary"
                     onClick={onUse}
-                    disabled={busy || !allText.trim()}
+                    disabled={busy || !allText.trim() || needsCorrection}
                   >
                     Use sheet in player
                   </button>

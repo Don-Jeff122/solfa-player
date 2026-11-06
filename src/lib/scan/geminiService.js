@@ -3,7 +3,7 @@ import {
   assembleHymnalSheetLayout,
   keyFromHymnalText,
 } from './geminiSheet.js'
-import { parseSolfa } from '../parseSolfa.js'
+import { validateSolfaSystems } from './solfaValidation.js'
 
 export const GEMINI_CONSENT_KEY = 'solfa-gemini-consent-v1'
 
@@ -174,18 +174,18 @@ export function createGeminiHymnalPage(pageNumber, value) {
   const headerLines = headerLinesFor({ ...value, key })
   const systemsData = value.systems
   const sheetText = assembleHymnalSheetLayout({ key, headerLines, systems: systemsData })
+  const validation = validateSolfaSystems(systemsData)
   const text = assembleHymnalSheet({ key, systems: systemsData })
-  const parsed = parseSolfa(text)
-  const parseError = parsed.ok
+  const parseError = validation.ok
     ? null
-    : parsed.error?.message || 'The Gemini note rows could not be read.'
+    : validation.error || 'The Gemini note rows could not be read.'
   if (parseError) warnings.push(`Check the notes: ${parseError}`)
   warnings.push(
     'Read by Gemini from the page image. Verify every row, key and lyric against the original.'
   )
   const bars =
-    parsed.ok && parsed.result.parts.length
-      ? Math.max(...parsed.result.parts.map((part) => part.bars.length))
+    validation.ok && validation.result.parts.length
+      ? Math.max(...validation.result.parts.map((part) => part.bars.length))
       : 0
   const rows = systemsData.reduce((sum, system) => sum + system.rows.length, 0)
   const page = {

@@ -21,6 +21,41 @@ const result = {
   plainText: 'Praise the Lord',
   warnings: [],
 }
+const solfaResult = {
+  mode: 'solfa',
+  title: 'Nun Danket',
+  key: 'F',
+  metre: '',
+  composer: '',
+  headerLines: [],
+  systems: [
+    {
+      rows: [
+        { voice: 'S', cells: ['d :d | r :r'] },
+        { voice: 'A', cells: ['s :s | l :l'] },
+        { voice: 'T', cells: ['m :m | f :f'] },
+        { voice: 'B', cells: ['d :d | d :d'] },
+      ],
+      lyrics: [],
+    },
+  ],
+  plainText: '',
+  warnings: [],
+}
+const invalidSolfaResult = {
+  ...solfaResult,
+  systems: [
+    {
+      rows: [
+        { voice: 'S', cells: ['d :d | r :r'] },
+        { voice: 'A', cells: ['s :s | l :l'] },
+        { voice: 'T', cells: ['m :m | f :f'] },
+        { voice: 'B', cells: ['d :d | n :n'] },
+      ],
+      lyrics: [],
+    },
+  ],
+}
 
 function request(body, overrides = {}) {
   return new Request('https://proxy.test/', {
@@ -58,6 +93,15 @@ describe('Gemini proxy request', () => {
     expect(built.response_format.mime_type).toBe('application/json')
     expect(built.response_format.schema.required).toContain('systems')
     expect(built.generation_config.thinking_level).toBe('low')
+  })
+
+  it('forbids invented letters in solfa cells', () => {
+    const built = buildGeminiRequest('solfa', 'cGFnZQ==', 'image/jpeg')
+    const prompt = built.input[0].text
+
+    expect(prompt).toMatch(/Never use any other letter/)
+    expect(prompt).toContain('not n')
+    expect(prompt).toMatch(/lyrics array, not in cells/)
   })
 
   it('extracts text from the current interaction response shapes', () => {
@@ -168,6 +212,71 @@ describe('Gemini proxy handler', () => {
       'gemini-3.5-flash-lite',
       'gemini-3.1-flash-lite',
     ])
+  })
+
+  it('tries the next solfa model when the notation is invalid', async () => {
+    const models = []
+    const fetchImpl = async (_url, options) => {
+      const body = JSON.parse(options.body)
+      models.push(body.model)
+      const output = body.model === 'gemini-3.8-flash' ? invalidSolfaResult : solfaResult
+      return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const response = await handleRequest(
+      request(pageBody({ mode: 'solfa' })),
+      env,
+      fetchImpl
+    )
+
+    expect(response.status).toBe(200)
+    expect(models).toEqual(['gemini-3.8-flash', 'gemini-3.6-flash'])
+    expect((await response.json()).data).toEqual(solfaResult)
+  })
+
+  it('returns an editable solfa sheet with a warning when every model is invalid', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ output_text: JSON.stringify(invalidSolfaResult) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+
+    const response = await handleRequest(
+      request(pageBody({ mode: 'solfa' })),
+      env,
+      fetchImpl
+    )
+    const payload = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(payload.data.systems).toHaveLength(1)
+    expect(payload.data.warnings.join(' ')).toMatch(/fully valid solfa sheet/)
+    expect(payload.data.warnings.join(' ')).toMatch(/Check the marked rows/)
+  })
+
+  it('accepts a text page from a solfa request without retrying', async () => {
+    const models = []
+    const fetchImpl = async (_url, options) => {
+      const body = JSON.parse(options.body)
+      models.push(body.model)
+      return new Response(JSON.stringify({ output_text: JSON.stringify(result) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const response = await handleRequest(
+      request(pageBody({ mode: 'solfa' })),
+      env,
+      fetchImpl
+    )
+
+    expect(response.status).toBe(200)
+    expect(models).toEqual(['gemini-3.8-flash'])
+    expect((await response.json()).data.mode).toBe('text')
   })
 
   it('reports a busy Gemini after retries are exhausted', async () => {
