@@ -64,7 +64,7 @@ function imageDocument(image, file) {
     previews.delete(key)
   }
 
-  async function renderPreview(index, { maxDimension = 1600, rotation = 0 } = {}) {
+  async function renderPreview(index, { maxDimension = 2400, rotation = 0 } = {}) {
     const key = `${index}:${maxDimension}:${rotation}`
     if (previews.has(key)) return previews.get(key)
     const rendered = canvasFrom(image, maxDimension)
@@ -138,7 +138,7 @@ async function pdfDocument(file, onProgress) {
     }
   }
 
-  async function getPreview(index, { maxDimension = 1500, rotation = 0 } = {}) {
+  async function getPreview(index, { maxDimension = 2400, rotation = 0 } = {}) {
     const key = `${index}:${maxDimension}:${rotation}`
     if (previews.has(key)) return previews.get(key)
     if (closed) throw new Error('The document was closed.')

@@ -65,7 +65,7 @@ export function rotateCanvas(source, degrees) {
   return canvas
 }
 
-export function canvasPreview(canvas, { maxDimension = 1500, quality = 0.88 } = {}) {
+export function canvasPreview(canvas, { maxDimension = 2400, quality = 0.92 } = {}) {
   const target = canvasFrom(canvas, maxDimension)
   return new Promise((resolve, reject) => {
     target.toBlob(

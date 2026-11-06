@@ -1455,6 +1455,13 @@ input[type='range']::-moz-range-thumb {
   white-space: nowrap;
 }
 
+.scanner-clear-mobile {
+  display: none;
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
 .scanner-split {
   display: grid;
   flex: 1;
@@ -1836,6 +1843,18 @@ input[type='range']::-moz-range-thumb {
   .scanner-note {
     display: none;
   }
+
+  .scanner-clear-mobile {
+    display: inline-flex;
+  }
+
+  .scanner-filebar {
+    flex-wrap: wrap;
+  }
+
+  .scanner-viewer-foot .btn-quiet {
+    display: none;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1851,11 +1870,19 @@ input[type='range']::-moz-range-thumb {
     flex-wrap: wrap;
   }
 
+  .scanner-clear-mobile {
+    margin-left: 0;
+  }
+
   .scanner-viewer-bar {
     align-items: flex-start;
   }
 
   .scanner-hint {
+    display: none;
+  }
+
+  .scanner-viewer-foot {
     display: none;
   }
 

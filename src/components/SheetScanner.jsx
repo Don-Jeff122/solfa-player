@@ -85,7 +85,7 @@ export default function SheetScanner({ onApply, onClose }) {
     if (!doc) return
     let alive = true
     doc
-      .getPreview(pageIndex, { rotation })
+      .getPreview(pageIndex, { rotation, maxDimension: 2400 })
       .then((next) => {
         if (alive) setPreview(next)
       })
@@ -437,6 +437,14 @@ export default function SheetScanner({ onApply, onClose }) {
                 <span className="tag">
                   {scanMode === 'general' ? 'document text' : 'solfa'}
                 </span>
+                <button
+                  type="button"
+                  className="btn btn-small scanner-clear-mobile"
+                  onClick={closeDocument}
+                  disabled={geminiBusy}
+                >
+                  Clear document
+                </button>
               </div>
             ) : (
               <div className="scanner-filebar">
