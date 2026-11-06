@@ -289,6 +289,27 @@ describe('part headers in hymnal mode', () => {
     expect(parsed.result.parts.map((p) => p.name)).toEqual(['Bass', 'Soprano', 'Alto', 'Tenor'])
   })
 
+  it('ignores a closing brace printed on its own line', () => {
+    const parsed = parseSolfa(
+      '{ s :- |\n' +
+        'd :- |\n' +
+        'm :- |\n' +
+        'l :- |\n' +
+        'Mon-kam- fo\n' +
+        '}\n' +
+        '{ s :- |\n' +
+        'd :- |\n' +
+        'm :- |\n' +
+        'l :- |\n' +
+        '}'
+    )
+    expect(parsed.ok).toBe(true, parsed.error && parsed.error.message)
+    expect(parsed.result.parts.map((p) => p.name)).toEqual(['Soprano', 'Alto', 'Tenor', 'Bass'])
+    for (const part of parsed.result.parts) {
+      expect(part.bars.length, part.name).toBe(2)
+    }
+  })
+
   it('continues the same four voices across unbraced systems', () => {
     // Two 4-line systems with no braces, a lyric line between them, and a
     // key header — the "D.C" line skips like any other marking.

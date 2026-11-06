@@ -1,18 +1,3 @@
-import { useRef } from 'react'
-
-function clamp01(value) {
-  return Math.min(1, Math.max(0, value))
-}
-
-function normalizeRect(start, end) {
-  return {
-    x: Math.min(start.x, end.x),
-    y: Math.min(start.y, end.y),
-    width: Math.abs(end.x - start.x),
-    height: Math.abs(end.y - start.y),
-  }
-}
-
 export default function DocumentViewer({
   preview,
   previewBusy,
@@ -23,75 +8,13 @@ export default function DocumentViewer({
   onRotate,
   zoom,
   onZoom,
-  selectMode,
-  onSelectModeChange,
-  selection,
-  onSelectionChange,
-  onScanPage,
-  onScanAll,
-  onScanRegion,
-  onStopScan,
-  scanning,
+  geminiEnabled,
+  geminiBusy,
+  onReadGemini,
   progress,
   onClearDocument,
-  enhance,
-  onEnhanceChange,
-  denoise,
-  onDenoiseChange,
   docKind,
-  hasResults,
 }) {
-  const dragRef = useRef(null)
-
-  function point(event) {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return {
-      x: clamp01((event.clientX - rect.left) / Math.max(1, rect.width)),
-      y: clamp01((event.clientY - rect.top) / Math.max(1, rect.height)),
-    }
-  }
-
-  function startSelection(event) {
-    if (!selectMode || !preview) return
-    event.preventDefault()
-    event.currentTarget.setPointerCapture?.(event.pointerId)
-    const start = point(event)
-    dragRef.current = start
-    onSelectionChange({ ...start, width: 0, height: 0 })
-  }
-
-  function moveSelection(event) {
-    if (!dragRef.current) return
-    event.preventDefault()
-    onSelectionChange(normalizeRect(dragRef.current, point(event)))
-  }
-
-  function endSelection(event) {
-    if (!dragRef.current) return
-    const rect = normalizeRect(dragRef.current, point(event))
-    dragRef.current = null
-    if (rect.width < 0.012 || rect.height < 0.012) {
-      onSelectionChange(null)
-      return
-    }
-    onSelectionChange(rect)
-  }
-
-  function cancelSelection() {
-    dragRef.current = null
-    onSelectionChange(null)
-    onSelectModeChange(false)
-  }
-
-  const selectionStyle = selection
-    ? {
-        left: `${selection.x * 100}%`,
-        top: `${selection.y * 100}%`,
-        width: `${selection.width * 100}%`,
-        height: `${selection.height * 100}%`,
-      }
-    : null
-
   return (
     <div className="scanner-viewer">
       <div className="scanner-viewer-bar">
@@ -100,10 +23,10 @@ export default function DocumentViewer({
             type="button"
             className="icon-btn"
             onClick={() => onPageChange(pageIndex - 1)}
-            disabled={pageIndex <= 0 || scanning}
+            disabled={pageIndex <= 0 || geminiBusy}
             aria-label="Previous page"
           >
-            ‹
+            &lt;
           </button>
           <label className="scanner-page-label">
             <span className="sr-only">Page</span>
@@ -116,6 +39,7 @@ export default function DocumentViewer({
                 const next = Number(event.target.value)
                 if (Number.isFinite(next)) onPageChange(next - 1)
               }}
+              disabled={geminiBusy}
               aria-label="Page number"
             />
             <span>/ {pageCount}</span>
@@ -124,10 +48,10 @@ export default function DocumentViewer({
             type="button"
             className="icon-btn"
             onClick={() => onPageChange(pageIndex + 1)}
-            disabled={pageIndex >= pageCount - 1 || scanning}
+            disabled={pageIndex >= pageCount - 1 || geminiBusy}
             aria-label="Next page"
           >
-            ›
+            &gt;
           </button>
         </div>
 
@@ -139,7 +63,7 @@ export default function DocumentViewer({
             disabled={zoom <= 0.5}
             aria-label="Zoom out"
           >
-            −
+            -
           </button>
           <button
             type="button"
@@ -163,34 +87,23 @@ export default function DocumentViewer({
         <div className="scanner-view-actions">
           <button
             type="button"
-            className={`btn btn-small${selectMode ? ' active' : ''}`}
-            onClick={() => {
-              if (selectMode) cancelSelection()
-              else onSelectModeChange(true)
-            }}
-            disabled={scanning || previewBusy || !preview}
-          >
-            {selectMode ? 'Cancel selection' : 'Select area'}
-          </button>
-          <button
-            type="button"
             className="icon-btn"
             onClick={() => onRotate(rotation - 90)}
-            disabled={scanning}
+            disabled={geminiBusy}
             aria-label="Rotate left"
             title="Rotate left"
           >
-            ⟲
+            &larr;
           </button>
           <button
             type="button"
             className="icon-btn"
             onClick={() => onRotate(rotation + 90)}
-            disabled={scanning}
+            disabled={geminiBusy}
             aria-label="Rotate right"
             title="Rotate right"
           >
-            ⟳
+            &rarr;
           </button>
         </div>
       </div>
@@ -198,23 +111,18 @@ export default function DocumentViewer({
       <div className="scanner-viewport">
         {preview ? (
           <div className="scanner-page" style={{ width: `${zoom * 100}%` }}>
-            <img src={preview.url} alt={`Page ${pageIndex + 1} of the document`} draggable="false" />
-            <div
-              className={`scanner-select-layer${selectMode ? ' selecting' : ''}`}
-              onPointerDown={startSelection}
-              onPointerMove={moveSelection}
-              onPointerUp={endSelection}
-              onPointerCancel={cancelSelection}
-            >
-              {selectionStyle && <div className="scanner-selection" style={selectionStyle} />}
-            </div>
+            <img
+              src={preview.url}
+              alt={`Page ${pageIndex + 1} of the document`}
+              draggable="false"
+            />
           </div>
         ) : (
           <div className="scanner-preview-empty">
             {previewBusy ? (
               <>
                 <div className="spinner" aria-hidden="true" />
-                <p>{progress || 'Rendering the page…'}</p>
+                <p>{progress || 'Rendering the page...'}</p>
               </>
             ) : (
               <p>No page preview yet.</p>
@@ -224,53 +132,27 @@ export default function DocumentViewer({
         {previewBusy && preview && (
           <div className="scanner-preview-busy" aria-live="polite">
             <div className="spinner" aria-hidden="true" />
-            <span>Rendering…</span>
+            <span>Rendering...</span>
           </div>
         )}
       </div>
 
       <div className="scanner-scan-row">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={onScanPage}
-          disabled={scanning || previewBusy || !preview}
-        >
-          {scanning ? 'Scanning…' : hasResults ? 'Rescan this page' : 'Scan this page'}
-        </button>
-        {pageCount > 1 && (
+        {geminiEnabled ? (
           <button
             type="button"
-            className="btn"
-            onClick={onScanAll}
-            disabled={scanning || previewBusy || !preview}
+            className="btn btn-primary"
+            onClick={onReadGemini}
+            disabled={geminiBusy || previewBusy || !preview}
           >
-            Scan all {pageCount} pages
+            {geminiBusy ? 'Reading with Gemini...' : 'Read with Gemini'}
           </button>
-        )}
-        {selection && (
-          <button
-            type="button"
-            className="btn"
-            onClick={onScanRegion}
-            disabled={scanning || previewBusy}
-          >
-            Scan selection
-          </button>
-        )}
-        {selection && (
-          <button type="button" className="btn btn-quiet" onClick={cancelSelection}>
-            Clear selection
-          </button>
-        )}
-        {scanning && (
-          <button type="button" className="btn btn-quiet" onClick={onStopScan}>
-            Stop after this page
-          </button>
+        ) : (
+          <p className="scanner-hint">Gemini is not configured for this build.</p>
         )}
       </div>
 
-      {scanning && progress && (
+      {geminiBusy && progress && (
         <p className="scanner-progress" aria-live="polite">
           <span className="spinner tiny" aria-hidden="true" />
           {progress}
@@ -278,34 +160,16 @@ export default function DocumentViewer({
       )}
 
       <div className="scanner-viewer-foot">
-        <label className="scanner-toggle">
-          <input
-            type="checkbox"
-            checked={enhance}
-            onChange={(event) => onEnhanceChange(event.target.checked)}
-            disabled={scanning}
-          />
-          <span>Enhance scan</span>
-        </label>
-        <label className="scanner-toggle">
-          <input
-            type="checkbox"
-            checked={denoise}
-            onChange={(event) => onDenoiseChange(event.target.checked)}
-            disabled={scanning}
-          />
-          <span>Reduce noise</span>
-        </label>
         <span className="scanner-hint">
           {docKind === 'pdf'
-            ? 'The PDF page is rendered locally. Nothing is uploaded.'
-            : 'The picture is processed locally. Nothing is uploaded.'}
+            ? 'The PDF page is rendered locally. It is sent to Gemini only when you press Read with Gemini.'
+            : 'The image is processed locally. It is sent to Gemini only when you press Read with Gemini.'}
         </span>
         <button
           type="button"
           className="btn btn-quiet btn-small"
           onClick={onClearDocument}
-          disabled={scanning}
+          disabled={geminiBusy}
         >
           Clear document
         </button>

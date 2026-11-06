@@ -1,0 +1,7 @@
+name = "solfa-gemini-proxy"
+main = "gemini-proxy.js"
+compatibility_date = "2026-05-20"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGINS = "https://don-jeff122.github.io,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"

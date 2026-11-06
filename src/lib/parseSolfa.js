@@ -187,6 +187,14 @@ export function parseSolfa(text) {
       // An uppercase L: row is a lyric line under the music.
       if (/^\s*L\d*\s*[:：]/.test(rawLine)) continue
       if (/^\[.*\]$/.test(rawLine)) continue
+      // A brace printed alone still starts/ends a system, but it carries no row.
+      if (/^[{}]+$/.test(rawLine)) {
+        if (rawLine.includes('{')) {
+          autoRow = 0
+          partHeaderForced = false
+        }
+        continue
+      }
 
       let scanText = rawLine
       let explicitVoice = false

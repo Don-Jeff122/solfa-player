@@ -4,7 +4,7 @@ Type tonic solfa and hear it played. Supports Ghanaian hymnal notation,
 multiple parts (Soprano/Alto/Tenor/Bass), `Doh = X` keys, chromatic syllables
 (`fe` = raised fa, a lone `e` = raised tonic), holds, slurs (underscored notes
 sung to one syllable and played legato), ties and repeats, plus WAV recording
-and OCR of printed solfa sheets.
+and Gemini-assisted reading of printed solfa sheets.
 
 Live at <https://don-jeff122.github.io/solfa-player/>.
 
@@ -18,8 +18,12 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
 - Audio is prepared automatically before Play and keeps playing when switching
   tabs or apps, or locking the screen
 - Record and download a WAV of the playback
-- Scan a printed page or PDF with Tesseract (loaded on demand) and turn it
-  into playable solfa
+- Read an image or PDF with Gemini and turn a solfa page into playable music
+- Four-part Gemini results keep their sheet-style layout: title, key, metre,
+  composer, braced Soprano/Alto/Tenor/Bass rows and lyric lines, all editable
+- General document mode returns editable text with TXT export
+- Gemini page reading through an owner-hosted Cloudflare Worker; only the
+  current page is sent, after explicit consent
 - A visible library of sheets saved in this browser (`localStorage`), with
   update, copy, replace and delete-undo actions
 
@@ -41,31 +45,77 @@ builds the app and publishes it on every push to `main`. The Vite build uses a
 relative `base` (`./` in `vite.config.js`) so the app also works from the
 Pages subpath.
 
+Gemini page reading requires the repository Actions variable
+`GEMINI_PROXY_URL` to be set to the deployed Worker URL before building. If it
+is empty, the build succeeds and the Gemini scanner button stays hidden.
+
 ## Offline use (installable PWA)
 
 The build is a Progressive Web App: open the deployed site once and install it
 (Add to Home Screen / install icon in the address bar). A service worker
-(`vite-plugin-pwa` + Workbox) precaches the whole app shell plus the OCR engine,
-so playback, saved sheets and the sheet scanner all work with no connection.
+(`vite-plugin-pwa` + Workbox) precaches the app shell, so playback, saved sheets
+and image/PDF page rendering work without a connection. Gemini page reading is
+network-only and fails with a clear message when offline.
 
-The OCR engine is bundled locally under `public/tesseract/` (Tesseract worker,
-LSTM core and `eng` language data), so scanning never calls a CDN:
+## Gemini page reading
 
-- `public/tesseract/worker/worker.min.js`: Tesseract web worker
-- `public/tesseract/core/tesseract-core-lstm.wasm.js`: SIMD-free LSTM core
-  (wasm embedded, works on every WebAssembly browser)
-- `public/tesseract/lang/eng.traineddata.gz`: English language data
+The scanner accepts images (JPG, PNG, WebP, BMP) and multi-page PDFs. PDFs are
+rendered locally one page at a time; the page image is sent to Gemini only after
+you press **Read with Gemini**.
+
+The scanner has two modes:
+
+- **Solfa sheet** returns editable four-part notation. The result keeps the
+  printed title, key, metre, composer, lyrics and braced voice rows. The sheet
+  text is parsed directly by the player.
+- **General document** returns editable page text that can be copied or
+  downloaded as `.txt`.
+
+The first Gemini read asks for consent. Later reads send only the page you are
+viewing. Gemini recognition can be wrong, so check every row, key, lyric and
+word against the original.
+
+The Gemini key must not be placed in this static app. Deploy the included
+Cloudflare Worker:
+
+```sh
+cd worker
+npx wrangler@4 secret put GEMINI_API_KEY
+npx wrangler@4 deploy
+```
+
+Then set the GitHub Actions repository variable `GEMINI_PROXY_URL` to the
+Worker URL and rebuild. The Worker allowlists the GitHub Pages and localhost
+origins, validates the page image and mode, and builds the Gemini request
+server-side. Add a Cloudflare rate-limiting rule for the Worker route so the
+owner's key cannot be abused.
+
+For local development, copy `worker/.dev.vars.example` to `worker/.dev.vars`,
+add your Google AI Studio key, run `npx wrangler@4 dev` from `worker/`, and set
+`VITE_GEMINI_PROXY_URL=http://127.0.0.1:8787` in `.env.local`.
+
+Gemini processes the page on Google's servers. The app sends only the current
+page, after confirmation, and does not save images on the proxy. If the Gemini
+API key uses the free tier, Google may use submitted content to improve its
+products; use a paid key if that is not acceptable. The Worker uses the current
+Interactions API schema, falls back through `gemini-3.5-flash-lite`,
+`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-3.6-flash` and
+`gemini-3.7-flash` when `gemini-3.8-flash` is busy or rate limited, and keeps
+the API key and prompts off the browser.
 
 ## Layout
 
-- `src/lib/parseSolfa.js`: solfa text → parsed notes/parts
-- `src/lib/hymnal.js`: scanners for printed hymnal sheets (`d : d | m : -`,
+- `src/lib/parseSolfa.js`: solfa text -> parsed notes/parts
+- `src/lib/hymnal.js`: parser for printed hymnal notation (`d : d | m : -`,
   `S:` part rows, `Doh = A` headers)
 - `src/audio/Synth.js`, `src/audio/voices.js`: Web Audio synthesizer and
   instrument presets (all plain data, fully unit-tested)
-- `src/components/`: piano, controls, saved sheets, sheet scanner
-- `src/lib/ocr.js`, `src/lib/ocrService.js`: Tesseract text cleanup and canvas OCR
+- `src/components/`: piano, controls, saved sheets, Gemini sheet reader
 - `src/lib/documentService.js`: lazy image/PDF page rendering with pdf.js
-- `src/lib/scan/`: scanner pipeline (canvas tools, preprocessing, uncertainty)
-- `src/lib/staff/`, `src/lib/hymnalScan.js`: staff and four-part hymnal
-  recognition
+- `src/lib/scan/geminiService.js`: Gemini consent, request and result validation
+- `src/lib/scan/geminiResults.js`: combines per-page Gemini results
+- `src/lib/scan/geminiSheet.js`: Gemini sheet assembly helpers
+- `worker/gemini-proxy.js`: owner-hosted Cloudflare Worker that keeps the Gemini
+  key off the client and builds the structured request
+- `src/components/scanner/GeminiDialog.jsx`: first-use consent and Gemini
+  progress/error dialog

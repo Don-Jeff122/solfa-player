@@ -4,6 +4,7 @@ import Piano from './components/Piano.jsx'
 import SaveSheet from './components/SaveSheet.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
 import SheetScanner from './components/SheetScanner.jsx'
+import { isGeminiConfigured } from './lib/scan/geminiService.js'
 import { Synth } from './audio/Synth.js'
 import {
   DEFAULT_SUSTAIN_ID,
@@ -123,6 +124,7 @@ function slurRuns(notes) {
 }
 
 export default function App() {
+  const geminiEnabled = isGeminiConfigured()
   const [text, setText] = useState(DEFAULT_TEXT)
   const [uiKey, setUiKey] = useState('C')
   const [partSel, setPartSel] = useState(null)
@@ -1156,13 +1158,15 @@ export default function App() {
           <div className="card-head">
             <h2>Music sheet</h2>
             <div className="head-actions">
-              <button
-                type="button"
-                className={`btn btn-small${showScanner ? ' active' : ''}`}
-                onClick={() => setShowScanner((v) => !v)}
-              >
-                Scan image / PDF
-              </button>
+              {geminiEnabled && (
+                <button
+                  type="button"
+                  className={`btn btn-small${showScanner ? ' active' : ''}`}
+                  onClick={() => setShowScanner((v) => !v)}
+                >
+                  Read with Gemini
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-small"
@@ -1179,7 +1183,7 @@ export default function App() {
               </button>
             </div>
           </div>
-          {showScanner && (
+          {showScanner && geminiEnabled && (
             <SheetScanner
               onClose={() => setShowScanner(false)}
               onApply={(scanned, scannedKey) => {

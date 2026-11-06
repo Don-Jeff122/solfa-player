@@ -2,13 +2,12 @@
  * Lazy access to an uploaded image or PDF.
  *
  * A PDF is opened once, then pages are rendered on demand so a big hymnal never
- * fills memory with every page at OCR resolution. Previews are separate,
+ * fills memory with every page at full resolution. Previews are separate,
  * smaller JPEG blobs and live in a tiny LRU cache.
  */
 
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { textItemsToLines } from './pdfText.js'
 import { canvasFrom, canvasPreview, createCanvas, rotateCanvas } from './scan/canvasTools.js'
 
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -49,7 +48,6 @@ function makePage(rendered, rotation) {
     canvas,
     width: canvas.width,
     height: canvas.height,
-    textLayer: rendered.textLayer || [],
     rotation,
   }
 }
@@ -82,9 +80,6 @@ function imageDocument(image, file) {
     kind: 'image',
     name: file.name || 'Scanned image',
     pageCount: 1,
-    get textLayers() {
-      return [[]]
-    },
     async getPage(index, { maxDimension = 2400, rotation = 0 } = {}) {
       if (closed) throw new Error('The document was closed.')
       if (index !== 0) throw new Error('This image has only one page.')
@@ -133,15 +128,7 @@ async function pdfDocument(file, onProgress) {
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, canvas.width, canvas.height)
       await page.render({ canvasContext: ctx, viewport }).promise
-
-      let textLayer = []
-      try {
-        const content = await page.getTextContent()
-        textLayer = textItemsToLines(content.items)
-      } catch {
-        textLayer = []
-      }
-      return { canvas, textLayer }
+      return { canvas }
     } finally {
       try {
         page.cleanup()
