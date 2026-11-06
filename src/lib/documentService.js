@@ -6,8 +6,8 @@
  * smaller JPEG blobs and live in a tiny LRU cache.
  */
 
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import { canvasFrom, canvasPreview, createCanvas, rotateCanvas } from './scan/canvasTools.js'
 
 GlobalWorkerOptions.workerSrc = workerUrl
