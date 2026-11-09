@@ -11,6 +11,14 @@ export default function DocumentViewer({
   geminiEnabled,
   geminiBusy,
   onReadGemini,
+  onReadAll,
+  readAllLabel,
+  remainingCount = 0,
+  onRetryFailed,
+  failedCount = 0,
+  batchRunning = false,
+  batchProgress = '',
+  onStopBatch,
   progress,
   onClearDocument,
   docKind,
@@ -139,20 +147,58 @@ export default function DocumentViewer({
 
       <div className="scanner-scan-row">
         {geminiEnabled ? (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onReadGemini}
-            disabled={geminiBusy || previewBusy || !preview}
-          >
-            {geminiBusy ? 'Reading with Gemini...' : 'Read with Gemini'}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onReadGemini}
+              disabled={geminiBusy || previewBusy || !preview}
+            >
+              {batchRunning
+                ? 'Reading pages...'
+                : geminiBusy
+                  ? 'Reading with Gemini...'
+                  : 'Read with Gemini'}
+            </button>
+            {!batchRunning && pageCount > 1 && remainingCount > 0 && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onReadAll}
+                disabled={geminiBusy}
+              >
+                {readAllLabel}
+              </button>
+            )}
+            {!batchRunning && failedCount > 0 && remainingCount !== failedCount && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onRetryFailed}
+                disabled={geminiBusy}
+              >
+                Retry failed ({failedCount})
+              </button>
+            )}
+            {batchRunning && (
+              <button type="button" className="btn btn-quiet" onClick={onStopBatch}>
+                Stop reading
+              </button>
+            )}
+          </>
         ) : (
           <p className="scanner-hint">Gemini is not configured for this build.</p>
         )}
       </div>
 
-      {geminiBusy && progress && (
+      {batchRunning && batchProgress && (
+        <p className="scanner-progress" aria-live="polite">
+          <span className="spinner tiny" aria-hidden="true" />
+          {batchProgress}
+        </p>
+      )}
+
+      {!batchRunning && geminiBusy && progress && (
         <p className="scanner-progress" aria-live="polite">
           <span className="spinner tiny" aria-hidden="true" />
           {progress}
@@ -162,8 +208,8 @@ export default function DocumentViewer({
       <div className="scanner-viewer-foot">
         <span className="scanner-hint">
           {docKind === 'pdf'
-            ? 'The PDF page is rendered locally. It is sent to Gemini only when you press Read with Gemini.'
-            : 'The image is processed locally. It is sent to Gemini only when you press Read with Gemini.'}
+            ? 'The PDF page is rendered locally. It is sent to Gemini only when you press Read with Gemini or read all pages.'
+            : 'The image is processed locally. It is sent to Gemini only when you press Read with Gemini or read all pages.'}
         </span>
         <button
           type="button"

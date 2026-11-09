@@ -122,4 +122,70 @@ describe('Gemini ScanResults', () => {
     expect(html).toContain('Page 2 has not been read by Gemini yet')
     expect(html).toContain('Read page 2 with Gemini')
   })
+
+  it('offers per-page and safe all-page player actions', () => {
+    const html = renderResult(
+      {
+        pages: 2,
+        pageResults: [
+          geminiPage(),
+          geminiPage({ pageNumber: 2, index: 1 }),
+        ],
+      },
+      {
+        activePage: 2,
+        pageCount: 3,
+        onUseAll: () => {},
+        canMergeAll: true,
+        onReadAll: () => {},
+        remainingCount: 2,
+        readAllLabel: 'Read remaining 2 pages',
+      }
+    )
+
+    expect(html).toContain('Use page 2 in player')
+    expect(html).toContain('Use all pages in player')
+    expect(html).toContain('Read remaining 2 pages')
+  })
+
+  it('lists failed pages and offers a retry', () => {
+    const html = renderResult(
+      {},
+      {
+        onRetryFailed: () => {},
+        failedPages: [{ pageNumber: 2, message: 'Gemini is busy.' }],
+        remainingCount: 2,
+        readAllLabel: 'Read remaining 2 pages',
+      }
+    )
+
+    expect(html).toContain('1 page could not be read')
+    expect(html).toContain('Page 2: Gemini is busy.')
+    expect(html).toContain('Retry failed (1)')
+  })
+
+  it('lists failed pages even when no page was read', () => {
+    const html = renderToStaticMarkup(
+      createElement(ScanResults, {
+        result: null,
+        activePage: 1,
+        pageCount: 3,
+        scanMode: 'solfa',
+        error: null,
+        geminiBusy: false,
+        onTextChange: () => {},
+        onUse: () => {},
+        onPageChange: () => {},
+        onReadGemini: () => {},
+        onReadAll: () => {},
+        remainingCount: 3,
+        readAllLabel: 'Retry 1 failed page',
+        failedPages: [{ pageNumber: 1, message: 'Gemini is busy.' }],
+      })
+    )
+
+    expect(html).toContain('1 page could not be read')
+    expect(html).toContain('Page 1: Gemini is busy.')
+    expect(html).toContain('Retry 1 failed page')
+  })
 })

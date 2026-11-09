@@ -35,6 +35,15 @@ describe('GeminiDialog', () => {
     expect(html).not.toContain('four-part solfa sheet')
   })
 
+  it('warns about an all-page batch and its request cost', () => {
+    const html = renderDialog({ scope: 'all', count: 4 })
+
+    expect(html).toContain('Read 4 pages with Gemini')
+    expect(html).toContain('Each page image is sent separately')
+    expect(html).toContain('at least 4 Gemini requests')
+    expect(html).toContain('Free limits can stop the batch')
+  })
+
   it('shows progress and errors while open', () => {
     const html = renderDialog({ busy: true, error: 'Gemini is busy.' })
 

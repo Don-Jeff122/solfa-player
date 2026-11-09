@@ -18,6 +18,11 @@ const GENERAL_MODELS = [
   'gemini-3.7-flash',
 ]
 const RETRY_DELAY_MS = 350
+const ATTEMPT_TIMEOUT_MS = 25000
+const TOTAL_TIMEOUT_MS = 60000
+const RATE_LIMIT_RETRY_AFTER = '10'
+const BUSY_RETRY_AFTER = '5'
+const TIMEOUT_RETRY_AFTER = '5'
 const API_REVISION = '2026-05-20'
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions'
 const MAX_BODY_BYTES = 10 * 1024 * 1024
@@ -205,19 +210,57 @@ function corsHeaders(origin, _env) {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Expose-Headers': 'Retry-After',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
 }
 
-function jsonResponse(body, status, origin, env) {
+function jsonResponse(body, status, origin, env, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
       ...corsHeaders(origin, env),
+      ...extraHeaders,
     },
   })
+}
+
+function positiveNumber(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
+function timeoutSettings(env) {
+  return {
+    attempt: positiveNumber(env?.GEMINI_ATTEMPT_TIMEOUT_MS, ATTEMPT_TIMEOUT_MS),
+    total: positiveNumber(env?.GEMINI_TOTAL_TIMEOUT_MS, TOTAL_TIMEOUT_MS),
+  }
+}
+
+async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
+  const controller = new AbortController()
+  let timer = 0
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort()
+      resolve({ timedOut: true })
+    }, timeoutMs)
+  })
+  const request = Promise.resolve()
+    .then(() => fetchImpl(url, { ...init, signal: controller.signal }))
+    .then((response) => ({ response }))
+    .catch((reason) => ({ reason }))
+  const outcome = await Promise.race([request, timeout])
+  clearTimeout(timer)
+  if (outcome.timedOut) return { timedOut: true }
+  if (outcome.reason) throw outcome.reason
+  return { response: outcome.response }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function rejectedOrigin() {
@@ -280,24 +323,43 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch) {
   }
 
   const models = modelsForMode(mode)
+  const timeouts = timeoutSettings(env)
+  const deadline = Date.now() + timeouts.total
   let lastStatus = 0
   let sawUpstream = false
   let sawUnreadable = false
+  let sawTimeout = false
   let bestEffort = null
 
   for (let attempt = 0; attempt < models.length; attempt += 1) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      sawTimeout = true
+      break
+    }
+
     const model = models[attempt]
     let upstream = null
     try {
-      upstream = await fetchImpl(GEMINI_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': env.GEMINI_API_KEY,
-          'Api-Revision': API_REVISION,
+      const result = await fetchWithTimeout(
+        fetchImpl,
+        GEMINI_URL,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': env.GEMINI_API_KEY,
+            'Api-Revision': API_REVISION,
+          },
+          body: JSON.stringify({ ...buildGeminiRequest(mode, data, mimeType), model }),
         },
-        body: JSON.stringify({ ...buildGeminiRequest(mode, data, mimeType), model }),
-      })
+        Math.min(timeouts.attempt, remaining)
+      )
+      if (result.timedOut) {
+        sawTimeout = true
+      } else {
+        upstream = result.response
+      }
     } catch {
       upstream = null
     }
@@ -340,7 +402,12 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch) {
     }
 
     if (attempt < models.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+      const wait = Math.min(RETRY_DELAY_MS, Math.max(0, deadline - Date.now()))
+      if (wait <= 0) {
+        sawTimeout = true
+        break
+      }
+      await sleep(wait)
     }
   }
 
@@ -358,33 +425,56 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch) {
     )
   }
 
+  if (!sawUpstream && sawTimeout) {
+    return jsonResponse(
+      { error: 'Gemini took too long to respond. Try again.' },
+      504,
+      origin,
+      env,
+      { 'Retry-After': TIMEOUT_RETRY_AFTER }
+    )
+  }
+
   if (!sawUpstream) {
     return jsonResponse({ error: 'The Gemini service could not be reached.' }, 502, origin, env)
   }
 
   const rateLimited = lastStatus === 429
   const busy = lastStatus === 503
+  const timedOut = lastStatus === 0 && sawTimeout
   const status =
     lastStatus === 429
       ? 429
       : lastStatus === 503
         ? 503
-        : lastStatus === 400 && !sawUnreadable
-          ? 400
-          : 502
+        : timedOut
+          ? 504
+          : lastStatus === 400 && !sawUnreadable
+            ? 400
+            : 502
+  const extraHeaders = rateLimited
+    ? { 'Retry-After': RATE_LIMIT_RETRY_AFTER }
+    : busy
+      ? { 'Retry-After': BUSY_RETRY_AFTER }
+      : timedOut
+        ? { 'Retry-After': TIMEOUT_RETRY_AFTER }
+        : {}
   return jsonResponse(
     {
       error: rateLimited
         ? 'Gemini request limit reached. Try again later.'
         : busy
           ? 'Gemini is busy. Try again in a moment.'
-          : sawUnreadable
-            ? 'Gemini returned an unreadable result.'
-            : 'Gemini could not read this page. Try again.',
+          : timedOut
+            ? 'Gemini took too long to respond. Try again.'
+            : sawUnreadable
+              ? 'Gemini returned an unreadable result.'
+              : 'Gemini could not read this page. Try again.',
     },
     status,
     origin,
-    env
+    env,
+    extraHeaders
   )
 }
 

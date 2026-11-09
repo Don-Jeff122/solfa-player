@@ -285,6 +285,7 @@ describe('Gemini proxy handler', () => {
     const response = await handleRequest(request(pageBody()), env, fetchImpl)
 
     expect(response.status).toBe(503)
+    expect(response.headers.get('Retry-After')).toBe('5')
     expect(await response.json()).toEqual({
       error: 'Gemini is busy. Try again in a moment.',
     })
@@ -296,8 +297,36 @@ describe('Gemini proxy handler', () => {
     const response = await handleRequest(request(pageBody()), env, fetchImpl)
 
     expect(response.status).toBe(429)
+    expect(response.headers.get('Retry-After')).toBe('10')
+    expect(response.headers.get('Access-Control-Expose-Headers')).toContain(
+      'Retry-After'
+    )
     expect(await response.json()).toEqual({
       error: 'Gemini request limit reached. Try again later.',
+    })
+  })
+
+  it('returns a timeout response when every Gemini attempt hangs', async () => {
+    const fetchImpl = (_url, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        })
+      })
+    const response = await handleRequest(
+      request(pageBody()),
+      {
+        ...env,
+        GEMINI_ATTEMPT_TIMEOUT_MS: '10',
+        GEMINI_TOTAL_TIMEOUT_MS: '35',
+      },
+      fetchImpl
+    )
+
+    expect(response.status).toBe(504)
+    expect(response.headers.get('Retry-After')).toBe('5')
+    expect(await response.json()).toEqual({
+      error: 'Gemini took too long to respond. Try again.',
     })
   })
 

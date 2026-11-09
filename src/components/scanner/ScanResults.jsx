@@ -46,10 +46,18 @@ function pageText(page, generalMode) {
 export default function ScanResults({
   result,
   activePage,
+  pageCount = 1,
   onPageChange,
   onTextChange,
   onUse,
+  onUseAll,
   onReadGemini,
+  onReadAll,
+  readAllLabel,
+  remainingCount = 0,
+  onRetryFailed,
+  failedPages = [],
+  canMergeAll = false,
   geminiBusy,
   scanMode,
   error,
@@ -72,6 +80,12 @@ export default function ScanResults({
   const lineCount = allText.split('\n').filter(Boolean).length
   const key = result?.key
   const needsCorrection = !generalMode && Boolean(result?.parseError)
+  const pageParseError = page?.playable?.parseError
+  const pageNeedsCorrection =
+    !generalMode &&
+    Boolean(
+      pageParseError !== undefined ? pageParseError : result?.parseError
+    )
 
   async function copy(label, text) {
     if (!text) return
@@ -96,12 +110,34 @@ export default function ScanResults({
         </p>
       )}
 
+      {failedPages.length > 0 && (
+        <div className="scanner-failures">
+          <p className="scanner-warn">
+            {failedPages.length} page{failedPages.length === 1 ? '' : 's'} could
+            not be read. Completed pages are kept.
+          </p>
+          <ul>
+            {failedPages.slice(0, 3).map((failure) => (
+              <li key={failure.pageNumber}>
+                Page {failure.pageNumber}: {failure.message}
+              </li>
+            ))}
+          </ul>
+          {failedPages.length > 3 && (
+            <p className="scanner-note">
+              {failedPages.length - 3} more page
+              {failedPages.length - 3 === 1 ? '' : 's'} failed.
+            </p>
+          )}
+        </div>
+      )}
+
       {!result ? (
         <div className="scanner-empty">
           <h3>Gemini results will appear here</h3>
           <p>
             Choose a page, then press <b>Read with Gemini</b>. Only the current page
-            is sent.
+            is sent. You can also read every page one at a time.
           </p>
           <ul>
             <li>Solfa mode returns editable four-part sheet rows.</li>
@@ -118,6 +154,11 @@ export default function ScanResults({
               >
                 {busy ? 'Reading with Gemini...' : 'Read with Gemini'}
               </button>
+              {onReadAll && pageCount > 1 && remainingCount > 0 && (
+                <button type="button" className="btn" onClick={onReadAll} disabled={busy}>
+                  {readAllLabel || `Read all ${pageCount} pages`}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -184,6 +225,11 @@ export default function ScanResults({
                   >
                     {busy ? 'Reading with Gemini...' : `Read page ${activePage} with Gemini`}
                   </button>
+                  {onReadAll && remainingCount > 0 && (
+                    <button type="button" className="btn" onClick={onReadAll} disabled={busy}>
+                      {readAllLabel}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -244,14 +290,28 @@ export default function ScanResults({
                   Download .txt
                 </button>
                 {!generalMode && (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={onUse}
-                    disabled={busy || !allText.trim() || needsCorrection}
-                  >
-                    Use sheet in player
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => onUse?.(page.pageNumber)}
+                      disabled={busy || !exact.trim() || pageNeedsCorrection}
+                    >
+                      {pages.length > 1
+                        ? `Use page ${page.pageNumber} in player`
+                        : 'Use sheet in player'}
+                    </button>
+                    {onUseAll && canMergeAll && pages.length > 1 && (
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={onUseAll}
+                        disabled={busy || !allText.trim() || needsCorrection}
+                      >
+                        Use all pages in player
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </>
@@ -260,9 +320,30 @@ export default function ScanResults({
           <div className="scanner-result-actions">
             {onReadGemini && (
               <button type="button" className="btn" onClick={onReadGemini} disabled={busy}>
-                {busy ? 'Reading with Gemini...' : `Read page ${activePage} again`}
+                {busy
+                  ? 'Reading with Gemini...'
+                  : page
+                    ? `Read page ${activePage} again`
+                    : `Read page ${activePage} with Gemini`}
               </button>
             )}
+            {onReadAll && pageCount > 1 && remainingCount > 0 && (
+              <button type="button" className="btn" onClick={onReadAll} disabled={busy}>
+                {readAllLabel}
+              </button>
+            )}
+            {onRetryFailed &&
+              failedPages.length > 0 &&
+              remainingCount !== failedPages.length && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onRetryFailed}
+                  disabled={busy}
+                >
+                  Retry failed ({failedPages.length})
+                </button>
+              )}
           </div>
         </>
       )}

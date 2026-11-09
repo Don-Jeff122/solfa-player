@@ -7,6 +7,7 @@ import {
   requestGeminiScan,
 } from '../geminiService.js'
 import {
+  canMergeSolfaPages,
   mergeGeminiGeneralPages,
   mergeGeminiSolfaPages,
 } from '../geminiResults.js'
@@ -151,6 +152,26 @@ describe('Gemini page conversion', () => {
   })
 })
 
+describe('Gemini multi-page grouping', () => {
+  function page(pageNumber, key = 'F', ok = true) {
+    return {
+      pageNumber,
+      index: pageNumber - 1,
+      playable: { ok, key, parseError: null },
+    }
+  }
+
+  it('allows consecutive pages that share a key', () => {
+    expect(canMergeSolfaPages([page(1), page(2), page(3)])).toBe(true)
+  })
+
+  it('rejects different keys, gaps and invalid pages', () => {
+    expect(canMergeSolfaPages([page(1, 'F'), page(2, 'G')])).toBe(false)
+    expect(canMergeSolfaPages([page(1), page(3)])).toBe(false)
+    expect(canMergeSolfaPages([page(1), page(2, 'F', false)])).toBe(false)
+  })
+})
+
 describe('Gemini image encoding', () => {
   it('encodes a page blob as base64', async () => {
     const blob = new Blob(['page'], { type: 'image/jpeg' })
@@ -213,7 +234,57 @@ describe('Gemini proxy request', () => {
         blob: new Blob(['page'], { type: 'image/jpeg' }),
         mode: 'general',
       })
-    ).rejects.toThrow(/could not be reached/i)
+    ).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('keeps the proxy status and retry hint on HTTP errors', async () => {
+    vi.stubEnv('VITE_GEMINI_PROXY_URL', 'https://proxy.test')
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'Gemini request limit reached.' }), {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '10',
+        },
+      })
+    ))
+
+    await expect(
+      requestGeminiScan({
+        blob: new Blob(['page'], { type: 'image/jpeg' }),
+        mode: 'general',
+      })
+    ).rejects.toMatchObject({
+      message: 'Gemini request limit reached.',
+      status: 429,
+      retryAfter: '10',
+    })
+  })
+
+  it('reports a caller cancellation separately from a timeout', async () => {
+    vi.stubEnv('VITE_GEMINI_PROXY_URL', 'https://proxy.test')
+    vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
+      if (options.signal.aborted) {
+        throw new DOMException('The operation was aborted.', 'AbortError')
+      }
+      return new Response(JSON.stringify({ data: textResult }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+    const controller = new AbortController()
+    controller.abort()
+
+    await expect(
+      requestGeminiScan({
+        blob: new Blob(['page'], { type: 'image/jpeg' }),
+        mode: 'general',
+        signal: controller.signal,
+      })
+    ).rejects.toMatchObject({
+      name: 'AbortError',
+      code: 'CANCELED',
+    })
   })
 
   it('rejects unsupported images and unconfigured builds', async () => {

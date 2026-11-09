@@ -260,7 +260,11 @@ export async function requestGeminiScan({ blob, mode, signal } = {}) {
 
   const data = await blobToBase64(blob)
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, REQUEST_TIMEOUT_MS)
   const abort = () => controller.abort()
   if (signal?.aborted) controller.abort()
   signal?.addEventListener?.('abort', abort)
@@ -279,17 +283,41 @@ export async function requestGeminiScan({ blob, mode, signal } = {}) {
       payload = null
     }
     if (!response.ok) {
-      throw new Error(payload?.error || 'Gemini could not read this page. Try again.')
+      const error = new Error(
+        payload?.error || 'Gemini could not read this page. Try again.'
+      )
+      error.status = response.status
+      const retryAfter = response.headers?.get?.('Retry-After')
+      if (retryAfter) error.retryAfter = retryAfter
+      throw error
     }
     const checked = normalizeGeminiResult(payload?.data ?? payload)
     if (!checked.ok) throw new Error(checked.error)
     return checked.value
   } catch (reason) {
     if (reason?.name === 'AbortError') {
-      throw new Error('Gemini took too long to respond. Try again.')
+      if (signal?.aborted) {
+        const error = new Error('Gemini reading was canceled.')
+        error.name = 'AbortError'
+        error.code = 'CANCELED'
+        throw error
+      }
+      if (timedOut) {
+        const error = new Error('Gemini took too long to respond. Try again.')
+        error.code = 'TIMEOUT'
+        throw error
+      }
+      const error = new Error('Gemini reading was canceled.')
+      error.name = 'AbortError'
+      error.code = 'CANCELED'
+      throw error
     }
     if (reason?.name === 'TypeError') {
-      throw new Error('Gemini could not be reached. Check your connection and try again.')
+      const error = new Error(
+        'Gemini could not be reached. Check your connection and try again.'
+      )
+      error.code = 'NETWORK'
+      throw error
     }
     throw reason instanceof Error ? reason : new Error('Gemini could not read this page.')
   } finally {

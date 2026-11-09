@@ -1189,6 +1189,22 @@ input[type='range']::-moz-range-thumb {
   line-height: 1.5;
 }
 
+.scanner-failures {
+  margin: 0 0 12px;
+}
+
+.scanner-failures .scanner-warn {
+  margin-bottom: 6px;
+}
+
+.scanner-failures ul {
+  margin: 0 0 6px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .scanner-preview-label {
   display: block;
   margin-bottom: 6px;

@@ -14,6 +14,29 @@ function firstKey(pages) {
   return null
 }
 
+export function canMergeSolfaPages(pages = []) {
+  if (!pages.length) return false
+  const ordered = orderedPages(pages)
+  let key = null
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const result = ordered[index].playable || ordered[index]
+    if (!result?.ok) return false
+    if (index > 0) {
+      const previous = ordered[index - 1]
+      const currentIndex = ordered[index].index ?? ordered[index].pageNumber - 1
+      const previousIndex = previous.index ?? previous.pageNumber - 1
+      if (currentIndex !== previousIndex + 1) return false
+    }
+    if (result.key) {
+      if (key && result.key !== key) return false
+      key = result.key
+    }
+  }
+
+  return true
+}
+
 function emptyResult(mode, message) {
   return {
     mode,
