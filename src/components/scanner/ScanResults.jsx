@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { combineGeminiPagesForCopy } from '../../lib/scan/geminiResults.js'
 
 async function copyToClipboard(text) {
   if (navigator.clipboard?.writeText) {
@@ -72,10 +73,12 @@ export default function ScanResults({
 
   const pages = result?.pageResults || []
   const page = pages.find((entry) => entry.pageNumber === activePage) || null
-  const allText = pages
-    .map((entry) => pageText(entry, generalMode))
-    .filter(Boolean)
-    .join('\n\n')
+  const combined = combineGeminiPagesForCopy(pages, {
+    mode: generalMode ? 'general' : 'solfa',
+    pageCount,
+    fallbackKey: result?.key,
+  })
+  const allText = combined.text
   const exact = pageText(page, generalMode)
   const lineCount = allText.split('\n').filter(Boolean).length
   const key = result?.key
@@ -206,6 +209,49 @@ export default function ScanResults({
             </div>
           )}
 
+          {combined.pages > 1 && (
+            <div className="scanner-all-pages">
+              <div className="scanner-all-pages-head">
+                <span className="tag">combined copy</span>
+                <span className="scanner-note">
+                  {combined.pages === pageCount
+                    ? `All ${pageCount} pages read`
+                    : `${combined.pages} of ${pageCount} pages read`}
+                </span>
+              </div>
+              <div className="scanner-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => copy('all-pages', allText)}
+                  disabled={!allText.trim()}
+                >
+                  {copied === 'all-pages'
+                    ? `Copied all ${combined.pages} pages`
+                    : `Copy all ${combined.pages} pages`}
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() =>
+                    downloadText(
+                      allText,
+                      generalMode ? 'document-transcription.txt' : 'solfa-sheet.txt'
+                    )
+                  }
+                  disabled={!allText.trim()}
+                >
+                  Download all .txt
+                </button>
+              </div>
+              {combined.warnings.map((warning) => (
+                <p className="scanner-warn" key={warning}>
+                  {warning}
+                </p>
+              ))}
+            </div>
+          )}
+
           {result.warnings?.map((warning) => (
             <p className="scanner-warn" key={warning}>
               {warning}
@@ -262,33 +308,39 @@ export default function ScanResults({
                 <button
                   type="button"
                   className="btn"
-                  onClick={() => copy('all', allText)}
-                  disabled={!allText}
+                  onClick={() => copy('page', exact)}
+                  disabled={!exact.trim()}
                 >
-                  {copied === 'all'
-                    ? generalMode
-                      ? 'Copied all text'
-                      : 'Copied all sheets'
-                    : generalMode
-                      ? 'Copy all text'
-                      : 'Copy all sheets'}
+                  {copied === 'page'
+                    ? pages.length > 1
+                      ? `Copied page ${page.pageNumber}`
+                      : generalMode
+                        ? 'Copied page text'
+                        : 'Copied sheet'
+                    : pages.length > 1
+                      ? `Copy page ${page.pageNumber}`
+                      : generalMode
+                        ? 'Copy page text'
+                        : 'Copy sheet'}
                 </button>
                 <button type="button" className="btn" onClick={selectAll}>
                   Select all
                 </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() =>
-                    downloadText(
-                      allText,
-                      generalMode ? 'document-transcription.txt' : 'solfa-sheet.txt'
-                    )
-                  }
-                  disabled={!allText}
-                >
-                  Download .txt
-                </button>
+                {pages.length <= 1 && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      downloadText(
+                        allText,
+                        generalMode ? 'document-transcription.txt' : 'solfa-sheet.txt'
+                      )
+                    }
+                    disabled={!allText.trim()}
+                  >
+                    Download .txt
+                  </button>
+                )}
                 {!generalMode && (
                   <>
                     <button

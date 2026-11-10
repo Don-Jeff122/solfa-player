@@ -14,6 +14,84 @@ function firstKey(pages) {
   return null
 }
 
+function pageKey(page) {
+  return page.key || page.playable?.key || null
+}
+
+function pageSheet(page) {
+  return page.sheetText || page.playable?.sheetText || ''
+}
+
+function missingCopyWarning(missingPages) {
+  return missingPages.length === 1
+    ? `Page ${missingPages[0]} was not read, so it is not in the combined copy.`
+    : `Pages ${missingPages.join(', ')} were not read, so they are not in the combined copy.`
+}
+
+export function combineGeminiPagesForCopy(
+  pages = [],
+  { mode = 'solfa', pageCount = 0, fallbackKey = null } = {}
+) {
+  const general = mode === 'general'
+  const ordered = orderedPages(pages).filter((page) => {
+    if (general) return Boolean(String(page.exactText ?? '').trim())
+    const result = page.playable || page
+    return Boolean(result?.ok) && Boolean(result.systemsData?.length || pageSheet(page).trim())
+  })
+
+  const pageNumbers = ordered.map((page) => page.pageNumber)
+  const total = pageCount || (pageNumbers.length ? Math.max(...pageNumbers) : 0)
+  const readPages = new Set(pageNumbers)
+  const missingPages = Array.from({ length: total }, (_, index) => index + 1).filter(
+    (pageNumber) => !readPages.has(pageNumber)
+  )
+
+  if (general) {
+    const text = ordered
+      .map((page) => String(page.exactText ?? ''))
+      .filter((value) => value.trim())
+      .join('\n\n')
+    return {
+      text,
+      pages: ordered.length,
+      pageNumbers,
+      key: null,
+      keys: [],
+      keysDiffer: false,
+      missingPages,
+      warnings: missingPages.length ? [missingCopyWarning(missingPages)] : [],
+    }
+  }
+
+  const keys = [...new Set(ordered.map(pageKey).filter(Boolean))]
+  const key = keys[0] || fallbackKey || null
+  const systems = ordered.flatMap((page) => (page.playable || page).systemsData || [])
+  const headerLines =
+    ordered[0]?.sheetHeaderLines || ordered[0]?.playable?.sheetHeaderLines || []
+  const fallbackText = ordered.map(pageSheet).filter(Boolean).join('\n\n')
+  const text = systems.length
+    ? assembleHymnalSheetLayout({ key, headerLines, systems })
+    : fallbackText
+  const warnings = []
+  if (keys.length > 1) {
+    warnings.push(
+      `Pages name different keys (${keys.join(', ')}). The combined copy uses the first key, ${key}.`
+    )
+  }
+  if (missingPages.length) warnings.push(missingCopyWarning(missingPages))
+
+  return {
+    text,
+    pages: ordered.length,
+    pageNumbers,
+    key,
+    keys,
+    keysDiffer: keys.length > 1,
+    missingPages,
+    warnings,
+  }
+}
+
 export function canMergeSolfaPages(pages = []) {
   if (!pages.length) return false
   const ordered = orderedPages(pages)

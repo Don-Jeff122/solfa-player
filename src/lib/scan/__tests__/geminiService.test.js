@@ -8,6 +8,7 @@ import {
 } from '../geminiService.js'
 import {
   canMergeSolfaPages,
+  combineGeminiPagesForCopy,
   mergeGeminiGeneralPages,
   mergeGeminiSolfaPages,
 } from '../geminiResults.js'
@@ -169,6 +170,85 @@ describe('Gemini multi-page grouping', () => {
     expect(canMergeSolfaPages([page(1, 'F'), page(2, 'G')])).toBe(false)
     expect(canMergeSolfaPages([page(1), page(3)])).toBe(false)
     expect(canMergeSolfaPages([page(1), page(2, 'F', false)])).toBe(false)
+  })
+})
+
+describe('Gemini combined page copy', () => {
+  function copyPage(pageNumber, { key = 'F', note = 's', systemsData } = {}) {
+    return {
+      pageNumber,
+      index: pageNumber - 1,
+      key,
+      sheetText: `Doh = ${key}`,
+      sheetHeaderLines: ['Nun Danket', `Doh = ${key}`],
+      exactText: `Page ${pageNumber}`,
+      playable: {
+        ok: true,
+        key,
+        sheetText: `Doh = ${key}`,
+        systemsData: systemsData ?? [
+          {
+            rows: [{ voice: 'S', cells: [`${note} :- |`] }],
+            lyrics: [],
+          },
+        ],
+      },
+    }
+  }
+
+  it('combines solfa pages into one sheet with the first key', () => {
+    const combined = combineGeminiPagesForCopy(
+      [copyPage(1), copyPage(2, { note: 'l' })],
+      { pageCount: 2 }
+    )
+
+    expect(combined.pages).toBe(2)
+    expect(combined.key).toBe('F')
+    expect(combined.keys).toEqual(['F'])
+    expect(combined.keysDiffer).toBe(false)
+    expect(combined.text.match(/Doh = /g)).toHaveLength(1)
+    expect(combined.text).toContain('s :- |')
+    expect(combined.text).toContain('l :- |')
+    expect(combined.missingPages).toEqual([])
+  })
+
+  it('uses the first key and warns when pages name different keys', () => {
+    const combined = combineGeminiPagesForCopy(
+      [copyPage(1, { key: 'F' }), copyPage(2, { key: 'G' })],
+      { pageCount: 2 }
+    )
+
+    expect(combined.key).toBe('F')
+    expect(combined.keys).toEqual(['F', 'G'])
+    expect(combined.keysDiffer).toBe(true)
+    expect(combined.warnings.join(' ')).toMatch(
+      /different keys \(F, G\).*first key, F/i
+    )
+  })
+
+  it('reports pages that were not read', () => {
+    const combined = combineGeminiPagesForCopy([copyPage(1), copyPage(3)], {
+      pageCount: 3,
+    })
+
+    expect(combined.pages).toBe(2)
+    expect(combined.missingPages).toEqual([2])
+    expect(combined.warnings.join(' ')).toMatch(/Page 2 was not read/)
+  })
+
+  it('joins general document pages as one text block', () => {
+    const combined = combineGeminiPagesForCopy(
+      [
+        { pageNumber: 1, exactText: 'First page' },
+        { pageNumber: 2, exactText: 'Second page' },
+      ],
+      { mode: 'general', pageCount: 2 }
+    )
+
+    expect(combined.text).toBe('First page\n\nSecond page')
+    expect(combined.pages).toBe(2)
+    expect(combined.keysDiffer).toBe(false)
+    expect(combined.missingPages).toEqual([])
   })
 })
 

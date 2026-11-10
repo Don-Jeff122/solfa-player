@@ -80,7 +80,7 @@ describe('Gemini ScanResults', () => {
     expect(html).toContain('Gemini solfa sheet')
     expect(html).toContain('Nun Danket')
     expect(html).toContain('Read by Gemini')
-    expect(html).toContain('Copy all sheets')
+    expect(html).toContain('Copy sheet')
     expect(html).toContain('Use sheet in player')
     expect(html).not.toContain('Playable interpretation')
   })
@@ -112,8 +112,41 @@ describe('Gemini ScanResults', () => {
 
     expect(html).toContain('Document transcription')
     expect(html).toContain('First line')
-    expect(html).toContain('Copy all text')
+    expect(html).toContain('Copy page text')
     expect(html).not.toContain('Use sheet in player')
+  })
+
+  it('offers one combined copy for multiple general pages', () => {
+    const first = geminiPage({
+      exactText: 'First page',
+      sheetText: '',
+      mode: 'general',
+      playable: undefined,
+    })
+    const second = geminiPage({
+      pageNumber: 2,
+      index: 1,
+      exactText: 'Second page',
+      sheetText: '',
+      mode: 'general',
+      playable: undefined,
+    })
+    const html = renderResult(
+      {
+        mode: 'general',
+        text: 'First page\n\nSecond page',
+        sheetText: '',
+        key: null,
+        pages: 2,
+        pageResults: [first, second],
+      },
+      { activePage: 2, pageCount: 2, scanMode: 'general' }
+    )
+
+    expect(html).toContain('Copy all 2 pages')
+    expect(html).toContain('Copy page 2')
+    expect(html).toContain('Download all .txt')
+    expect(html).not.toContain('Use page 2 in player')
   })
 
   it('asks for the current page when it has not been read', () => {
@@ -146,6 +179,49 @@ describe('Gemini ScanResults', () => {
     expect(html).toContain('Use page 2 in player')
     expect(html).toContain('Use all pages in player')
     expect(html).toContain('Read remaining 2 pages')
+    expect(html).toContain('Copy all 2 pages')
+    expect(html).toContain('Download all .txt')
+    expect(html).toContain('Copy page 2')
+  })
+
+  it('offers a combined copy when pages name different keys', () => {
+    const html = renderResult(
+      {
+        pages: 2,
+        pageResults: [
+          geminiPage(),
+          geminiPage({
+            pageNumber: 2,
+            index: 1,
+            key: 'G',
+            sheetText: sheet.replace('Doh = F', 'Doh = G'),
+            playable: { ...geminiPage().playable, key: 'G' },
+          }),
+        ],
+      },
+      { activePage: 2, pageCount: 2 }
+    )
+
+    expect(html).toContain('Copy all 2 pages')
+    expect(html).toContain('Pages name different keys (F, G)')
+    expect(html).toContain('first key, F')
+  })
+
+  it('offers a combined copy while the active page is unread', () => {
+    const html = renderResult(
+      {
+        pages: 2,
+        pageResults: [
+          geminiPage(),
+          geminiPage({ pageNumber: 2, index: 1 }),
+        ],
+      },
+      { activePage: 3, pageCount: 3 }
+    )
+
+    expect(html).toContain('Page 3 has not been read by Gemini yet')
+    expect(html).toContain('Copy all 2 pages')
+    expect(html).toContain('Page 3 was not read')
   })
 
   it('lists failed pages and offers a retry', () => {
