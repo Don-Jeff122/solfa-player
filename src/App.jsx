@@ -1419,6 +1419,7 @@ export default function App() {
             canPlay={!!sequences && totalBeats > 0}
             isPlaying={isPlaying}
             mediaPlayback={!liveFallback}
+            preparing={bgStatus === 'preparing'}
             onPlay={handlePlay}
             onStop={stopPlayback}
             isPaused={isPaused}

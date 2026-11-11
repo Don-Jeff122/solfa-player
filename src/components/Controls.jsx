@@ -12,6 +12,7 @@ export default function Controls({
   canPlay,
   isPlaying,
   mediaPlayback,
+  preparing,
   onPlay,
   onStop,
   isPaused,
@@ -78,9 +79,15 @@ export default function Controls({
                 className="btn btn-primary"
                 onClick={onPlay}
                 disabled={!canPlay}
+                aria-busy={preparing && !isPaused ? true : undefined}
+                title={
+                  preparing && !isPaused
+                    ? 'Audio is being prepared; playback will start when ready'
+                    : undefined
+                }
               >
                 <span className="btn-icon play" />
-                {isPaused ? 'Resume' : 'Play'}
+                {preparing && !isPaused ? 'Preparing…' : isPaused ? 'Resume' : 'Play'}
               </button>
               {isPaused && (
                 <button type="button" className="btn btn-stop" onClick={onStop}>
