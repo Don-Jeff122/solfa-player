@@ -132,6 +132,157 @@ export function saveSheet({ name, text }, store = defaultStorage()) {
   }
 }
 
+/** Case-insensitive search across sheet names and notation text. */
+export function searchSheets(sheets, query) {
+  const term = String(query ?? '').trim().toLowerCase()
+  if (!term) return sheets
+  return sheets.filter(
+    (sheet) =>
+      sheet.name.toLowerCase().includes(term) || sheet.text.toLowerCase().includes(term)
+  )
+}
+
+/** Rename a saved sheet without moving it in the library. */
+export function renameSheet(id, name, store = defaultStorage()) {
+  const trimmed = String(name ?? '').trim()
+  const sheets = loadSheets(store)
+  if (!trimmed) return { sheets, error: 'empty' }
+  const at = sheets.findIndex((sheet) => sheet.id === id)
+  if (at < 0) return { sheets, error: 'missing' }
+  if (
+    sheets.some(
+      (sheet, index) => index !== at && sheet.name.toLowerCase() === trimmed.toLowerCase()
+    )
+  ) {
+    return { sheets, error: 'duplicate' }
+  }
+  if (sheets[at].name === trimmed) return { sheets, sheet: sheets[at] }
+  const entry = { ...sheets[at], name: trimmed }
+  const next = sheets.map((sheet, index) => (index === at ? entry : sheet))
+  try {
+    write(next, store)
+    return { sheets: next, sheet: entry }
+  } catch {
+    return { sheets, error: 'storage' }
+  }
+}
+
+/** Copy a sheet under a free name and put the copy first. */
+export function duplicateSheet(id, store = defaultStorage()) {
+  const sheets = loadSheets(store)
+  const original = sheets.find((sheet) => sheet.id === id)
+  if (!original) return { sheets, error: 'missing' }
+  const base =
+    original.name.replace(/\s*\(copy(?:\s+\d+)?\)$/i, '').trim() || original.name
+  const entry = {
+    id: newId(),
+    name: uniqueSheetName(base, sheets),
+    text: original.text,
+    savedAt: Date.now(),
+  }
+  const next = [entry, ...sheets].slice(0, MAX_SHEETS)
+  try {
+    write(next, store)
+    return { sheets: next, sheet: entry }
+  } catch {
+    return { sheets, error: 'storage' }
+  }
+}
+
+/** A portable backup of the whole library. */
+export function exportLibrary(sheets) {
+  return JSON.stringify(
+    {
+      app: 'solfa-piano',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      sheets: sheets.map(({ name, text, savedAt }) => ({
+        name,
+        text,
+        savedAt: Number.isFinite(savedAt) ? savedAt : 0,
+      })),
+    },
+    null,
+    2
+  )
+}
+
+function libraryEntries(raw) {
+  let parsed
+  try {
+    parsed = JSON.parse(String(raw ?? ''))
+  } catch {
+    return { error: 'invalid' }
+  }
+  const entries = Array.isArray(parsed) ? parsed : parsed?.sheets
+  if (!Array.isArray(entries)) return { error: 'invalid' }
+  const valid = entries
+    .filter(
+      (entry) =>
+        entry &&
+        typeof entry.name === 'string' &&
+        entry.name.trim() &&
+        typeof entry.text === 'string' &&
+        entry.text.trim()
+    )
+    .map((entry) => ({
+      name: entry.name.trim(),
+      text: entry.text,
+      savedAt: Number.isFinite(entry.savedAt) ? entry.savedAt : 0,
+    }))
+  return valid.length ? { entries: valid } : { error: 'empty' }
+}
+
+/**
+ * Merge a backup into the library. Identical sheets are skipped; a name clash
+ * with different notes keeps both by giving the imported one a copy suffix.
+ */
+export function importLibrary(raw, store = defaultStorage()) {
+  const parsed = libraryEntries(raw)
+  if (parsed.error) return { sheets: loadSheets(store), error: parsed.error }
+  const existing = loadSheets(store)
+  const working = [...existing]
+  const importedIds = new Set()
+  let renamed = 0
+  let skipped = 0
+  for (const entry of parsed.entries) {
+    const clash = working.find(
+      (sheet) => sheet.name.toLowerCase() === entry.name.toLowerCase()
+    )
+    if (clash) {
+      if (clash.text === entry.text) {
+        skipped += 1
+        continue
+      }
+      const nextName = uniqueSheetName(entry.name, working)
+      if (nextName !== entry.name) renamed += 1
+      entry.name = nextName
+    }
+    const next = { id: newId(), name: entry.name, text: entry.text, savedAt: entry.savedAt }
+    importedIds.add(next.id)
+    working.push(next)
+  }
+  if (!importedIds.size) {
+    return { sheets: existing, imported: 0, renamed, skipped, dropped: 0, max: MAX_SHEETS }
+  }
+  const sorted = [...working].sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+  const kept = sorted.slice(0, MAX_SHEETS)
+  const keptImported = kept.filter((sheet) => importedIds.has(sheet.id)).length
+  try {
+    write(kept, store)
+    return {
+      sheets: kept,
+      imported: keptImported,
+      renamed,
+      skipped,
+      dropped: importedIds.size - keptImported,
+      max: MAX_SHEETS,
+    }
+  } catch {
+    return { sheets: existing, error: 'storage' }
+  }
+}
+
 /** Forget one sheet, leaving the rest alone. */
 export function deleteSheet(id, store = defaultStorage()) {
   const sheets = loadSheets(store)

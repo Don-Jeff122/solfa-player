@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
+import MobileTransport from './components/MobileTransport.jsx'
 import Piano from './components/Piano.jsx'
 import SaveSheet from './components/SaveSheet.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
@@ -24,11 +25,16 @@ import {
 import {
   deleteSheet,
   describeSheet,
+  duplicateSheet,
+  exportLibrary,
+  importLibrary,
   loadSheets,
+  renameSheet,
   restoreSheet,
   saveSheet,
   uniqueSheetName,
 } from './lib/sheetStore.js'
+import { clearDraft, loadDraft, saveDraft } from './lib/draftStore.js'
 import { buildTimeline, timelineAt } from './lib/timeline.js'
 
 const nextFrame =
@@ -125,11 +131,12 @@ function slurRuns(notes) {
 
 export default function App() {
   const geminiEnabled = isGeminiConfigured()
-  const [text, setText] = useState(DEFAULT_TEXT)
-  const [uiKey, setUiKey] = useState('C')
-  const [partSel, setPartSel] = useState(null)
-  const [tempo, setTempo] = useState(90)
-  const [octave, setOctave] = useState(0)
+  const [initialDraft] = useState(() => loadDraft())
+  const [text, setText] = useState(() => initialDraft?.text ?? DEFAULT_TEXT)
+  const [uiKey, setUiKey] = useState(() => initialDraft?.uiKey ?? 'C')
+  const [partSel, setPartSel] = useState(() => initialDraft?.partSel ?? null)
+  const [tempo, setTempo] = useState(() => initialDraft?.tempo ?? 90)
+  const [octave, setOctave] = useState(() => initialDraft?.octave ?? 0)
   const [showScanner, setShowScanner] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeMidi, setActiveMidi] = useState(() => new Set())
@@ -141,16 +148,33 @@ export default function App() {
   const [audioStats, setAudioStats] = useState(null)
   const [audioError, setAudioError] = useState(null)
   const [sheets, setSheets] = useState(() => loadSheets())
-  const [sheetName, setSheetName] = useState('')
-  const [savedMsg, setSavedMsg] = useState(null)
-  const [activeSheet, setActiveSheet] = useState(null)
+  const [activeSheet, setActiveSheet] = useState(() => {
+    const id = initialDraft?.activeSheetId
+    if (!id) return null
+    const sheet = sheets.find((entry) => entry.id === id)
+    return sheet
+      ? { id: sheet.id, name: sheet.name, text: sheet.text, savedAt: sheet.savedAt }
+      : null
+  })
+  const [sheetName, setSheetName] = useState(
+    () => initialDraft?.sheetName || activeSheet?.name || ''
+  )
+  const [savedMsg, setSavedMsg] = useState(() => {
+    if (!initialDraft) return null
+    if (activeSheet) {
+      return initialDraft.text === activeSheet.text
+        ? `Reopened “${activeSheet.name}”.`
+        : 'Restored your last draft.'
+    }
+    return initialDraft.text !== DEFAULT_TEXT ? 'Restored your last draft.' : null
+  })
   const [pendingSave, setPendingSave] = useState(null)
   const [undoDelete, setUndoDelete] = useState(null)
-  const [voiceOctaves, setVoiceOctaves] = useState({})
-  const [sound, setSound] = useState(DEFAULT_VOICE_ID)
-  const [sustain, setSustain] = useState(DEFAULT_SUSTAIN_ID)
-  const [repeat, setRepeat] = useState(false)
-  const [metronome, setMetronome] = useState(false)
+  const [voiceOctaves, setVoiceOctaves] = useState(() => initialDraft?.voiceOctaves ?? {})
+  const [sound, setSound] = useState(() => initialDraft?.sound || DEFAULT_VOICE_ID)
+  const [sustain, setSustain] = useState(() => initialDraft?.sustain || DEFAULT_SUSTAIN_ID)
+  const [repeat, setRepeat] = useState(() => initialDraft?.repeat ?? false)
+  const [metronome, setMetronome] = useState(() => initialDraft?.metronome ?? false)
   const [bgStatus, setBgStatus] = useState('stale')
   const [bgDuration, setBgDuration] = useState(0)
   const [position, setPosition] = useState(0)
@@ -178,9 +202,56 @@ export default function App() {
   const backgroundKeyRef = useRef('')
   const backgroundPlaybackKeyRef = useRef(null)
   const mediaActionsRef = useRef({})
+  const draftRef = useRef(null)
   // Read from the synth's done callback, which is set up once per pass.
   const repeatRef = useRef(false)
   const startRef = useRef(null)
+  draftRef.current = {
+    text,
+    sheetName,
+    uiKey,
+    tempo,
+    octave,
+    sound,
+    sustain,
+    repeat,
+    metronome,
+    voiceOctaves,
+    partSel,
+    activeSheetId: activeSheet?.id ?? null,
+  }
+  useEffect(() => {
+    const timer = setTimeout(() => saveDraft(draftRef.current), 450)
+    return () => clearTimeout(timer)
+  }, [
+    text,
+    sheetName,
+    uiKey,
+    tempo,
+    octave,
+    sound,
+    sustain,
+    repeat,
+    metronome,
+    voiceOctaves,
+    partSel,
+    activeSheet,
+  ])
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return undefined
+    }
+    const flush = () => saveDraft(draftRef.current)
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
   useEffect(() => {
     repeatRef.current = repeat
   }, [repeat])
@@ -1130,6 +1201,92 @@ export default function App() {
     setUndoDelete(null)
   }
 
+  const handleRenameSheet = (id, name) => {
+    const current = sheets.find((sheet) => sheet.id === id) || null
+    const result = renameSheet(id, name)
+    if (result.error) {
+      const message =
+        result.error === 'duplicate'
+          ? 'Another saved sheet already has that name.'
+          : result.error === 'empty'
+            ? 'Enter a name.'
+            : result.error === 'storage'
+              ? 'Could not rename. This browser is blocking storage.'
+              : 'That sheet is no longer in the library.'
+      return { ok: false, error: message }
+    }
+    setSheets(result.sheets)
+    setUndoDelete(null)
+    setPendingSave(null)
+    if (activeSheet?.id === id && current) {
+      setActiveSheet((previous) =>
+        previous?.id === id ? { ...previous, name: result.sheet.name } : previous
+      )
+      setSheetName((previous) =>
+        !previous.trim() || previous.trim().toLowerCase() === current.name.toLowerCase()
+          ? result.sheet.name
+          : previous
+      )
+    }
+    return { ok: true, name: result.sheet.name }
+  }
+
+  const handleDuplicateSheet = (id) => {
+    const result = duplicateSheet(id)
+    if (result.error) {
+      return {
+        ok: false,
+        error:
+          result.error === 'storage'
+            ? 'Could not copy. This browser is blocking storage.'
+            : 'That sheet is no longer in the library.',
+      }
+    }
+    setSheets(result.sheets)
+    setUndoDelete(null)
+    return { ok: true, name: result.sheet.name }
+  }
+
+  const handleExportSheets = () => {
+    if (!sheets.length) return { ok: false, error: 'There are no saved sheets to export.' }
+    try {
+      const blob = new Blob([exportLibrary(sheets)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `solfa-sheets-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+      return { ok: true, count: sheets.length }
+    } catch {
+      return { ok: false, error: 'Could not export the library from this browser.' }
+    }
+  }
+
+  const handleImportSheets = async (file) => {
+    try {
+      const raw = await file.text()
+      const result = importLibrary(raw)
+      if (result.error) {
+        const message =
+          result.error === 'storage'
+            ? 'Could not import. This browser is blocking storage.'
+            : result.error === 'empty'
+              ? 'No saved sheets were found in that file.'
+              : 'That file is not a Solfa Piano sheet backup.'
+        return { ok: false, error: message }
+      }
+      setSheets(result.sheets)
+      setUndoDelete(null)
+      setPendingSave(null)
+      return { ...result, ok: true }
+    } catch {
+      return { ok: false, error: 'Could not read that backup file.' }
+    }
+  }
+
   const partLabel = allSelected
       ? 'All parts'
       : activeParts.length === 1
@@ -1171,12 +1328,15 @@ export default function App() {
                 type="button"
                 className="btn btn-small"
                 onClick={() => {
+                  clearDraft()
                   setText(DEFAULT_TEXT)
                   setError(null)
                   setSavedMsg(null)
                   setSheetName('')
                   setActiveSheet(null)
                   setPendingSave(null)
+                  setPartSel(null)
+                  setVoiceOctaves({})
                 }}
               >
                 Reset example
@@ -1253,6 +1413,10 @@ export default function App() {
             onLoad={handleLoadSheet}
             onDelete={handleDeleteSheet}
             onUndoDelete={handleUndoDelete}
+            onRename={handleRenameSheet}
+            onDuplicate={handleDuplicateSheet}
+            onExport={handleExportSheets}
+            onImport={handleImportSheets}
           />
 
           {result && (
@@ -1519,6 +1683,21 @@ export default function App() {
           </p>
         </section>
       </div>
+      <MobileTransport
+        canPlay={!!sequences && totalBeats > 0}
+        isPlaying={isPlaying}
+        isPaused={isPaused}
+        mediaPlayback={!liveFallback}
+        preparing={bgStatus === 'preparing'}
+        progress={position}
+        duration={bgDuration}
+        tempo={tempo}
+        onPlay={handlePlay}
+        onPause={pauseBackground}
+        onStop={stopPlayback}
+        onSeek={seekBackground}
+        onTempo={setTempo}
+      />
       <audio
         ref={audioRef}
         className="bg-audio"

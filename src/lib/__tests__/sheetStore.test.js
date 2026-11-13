@@ -3,9 +3,14 @@ import {
   MAX_SHEETS,
   deleteSheet,
   describeSheet,
+  duplicateSheet,
+  exportLibrary,
+  importLibrary,
   loadSheets,
+  renameSheet,
   restoreSheet,
   saveSheet,
+  searchSheets,
   uniqueSheetName,
 } from '../sheetStore.js'
 
@@ -227,5 +232,124 @@ describe('deleteSheet', () => {
     saveSheet({ name: 'Only', text: 'Do' }, store)
 
     expect(deleteSheet('nope', store)).toHaveLength(1)
+  })
+})
+
+describe('searchSheets', () => {
+  const sheets = [
+    { id: '1', name: 'Morning hymn', text: 'Do Re Mi', savedAt: 2 },
+    { id: '2', name: 'Evening', text: 'So La Ti', savedAt: 1 },
+  ]
+
+  it('matches names and notation case-insensitively', () => {
+    expect(searchSheets(sheets, 'MORNING').map((s) => s.id)).toEqual(['1'])
+    expect(searchSheets(sheets, 'la ti').map((s) => s.id)).toEqual(['2'])
+  })
+
+  it('returns every sheet for a blank query', () => {
+    expect(searchSheets(sheets, '   ')).toBe(sheets)
+  })
+})
+
+describe('renameSheet', () => {
+  it('renames in place without changing the notes', () => {
+    const store = fakeStore()
+    const saved = saveSheet({ name: 'Old', text: 'Do Re' }, store).saved
+    saveSheet({ name: 'Other', text: 'Mi' }, store)
+
+    const result = renameSheet(saved.id, '  New name  ', store)
+
+    expect(result.error).toBeUndefined()
+    expect(result.sheet.name).toBe('New name')
+    expect(result.sheets.map((s) => s.name)).toEqual(['Other', 'New name'])
+    expect(loadSheets(store).find((s) => s.id === saved.id).text).toBe('Do Re')
+  })
+
+  it('rejects blank, missing, duplicate and failed names', () => {
+    const store = fakeStore()
+    const one = saveSheet({ name: 'One', text: 'Do' }, store).saved
+    saveSheet({ name: 'Two', text: 'Re' }, store)
+
+    expect(renameSheet(one.id, ' ', store).error).toBe('empty')
+    expect(renameSheet('missing', 'Name', store).error).toBe('missing')
+    expect(renameSheet(one.id, 'two', store).error).toBe('duplicate')
+
+    store.setItem = () => {
+      throw new Error('quota exceeded')
+    }
+    expect(renameSheet(one.id, 'Three', store).error).toBe('storage')
+  })
+})
+
+describe('duplicateSheet', () => {
+  it('copies a sheet first under a free name', () => {
+    const store = fakeStore()
+    const saved = saveSheet({ name: 'Song', text: 'Do Re' }, store).saved
+
+    const result = duplicateSheet(saved.id, store)
+
+    expect(result.error).toBeUndefined()
+    expect(result.sheet.name).toBe('Song (copy)')
+    expect(result.sheet.id).not.toBe(saved.id)
+    expect(result.sheet.text).toBe('Do Re')
+    expect(result.sheets.map((s) => s.name)).toEqual(['Song (copy)', 'Song'])
+  })
+
+  it('reports a missing sheet', () => {
+    expect(duplicateSheet('missing', fakeStore()).error).toBe('missing')
+  })
+})
+
+describe('library backup', () => {
+  it('exports and restores a library', () => {
+    const source = fakeStore()
+    saveSheet({ name: 'One', text: 'Do' }, source)
+    saveSheet({ name: 'Two', text: 'Re Mi' }, source)
+    const backup = exportLibrary(loadSheets(source))
+
+    expect(JSON.parse(backup)).toMatchObject({
+      app: 'solfa-piano',
+      version: 1,
+    })
+
+    const target = fakeStore()
+    const result = importLibrary(backup, target)
+
+    expect(result).toMatchObject({ imported: 2, renamed: 0, skipped: 0, dropped: 0 })
+    expect(loadSheets(target).map((s) => s.name)).toEqual(['Two', 'One'])
+  })
+
+  it('skips identical sheets and renames clashing imports', () => {
+    const store = fakeStore()
+    saveSheet({ name: 'Song', text: 'Do' }, store)
+    const backup = JSON.stringify([
+      { name: 'Song', text: 'Do', savedAt: 1 },
+      { name: 'song', text: 'Re Mi', savedAt: 2 },
+    ])
+
+    const result = importLibrary(backup, store)
+
+    expect(result).toMatchObject({ imported: 1, renamed: 1, skipped: 1 })
+    expect(loadSheets(store).map((s) => s.name)).toEqual(['Song', 'song (copy)'])
+  })
+
+  it('rejects malformed or empty backups', () => {
+    expect(importLibrary('not json', fakeStore()).error).toBe('invalid')
+    expect(importLibrary('{"sheets": {}}', fakeStore()).error).toBe('invalid')
+    expect(importLibrary('[]', fakeStore()).error).toBe('empty')
+    expect(importLibrary('{"sheets": [{"name": " "}]}', fakeStore()).error).toBe('empty')
+  })
+
+  it('reports a storage failure without changing the library', () => {
+    const store = fakeStore()
+    saveSheet({ name: 'Keep', text: 'Do' }, store)
+    store.setItem = () => {
+      throw new Error('quota exceeded')
+    }
+
+    const result = importLibrary(JSON.stringify([{ name: 'New', text: 'Re' }]), store)
+
+    expect(result.error).toBe('storage')
+    expect(result.sheets.map((s) => s.name)).toEqual(['Keep'])
   })
 })
