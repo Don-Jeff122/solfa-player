@@ -181,6 +181,7 @@ export default function App() {
   const [isPaused, setIsPaused] = useState(false)
   const [liveFallback, setLiveFallback] = useState(false)
   const [textFocused, setTextFocused] = useState(false)
+  const [mobileDockVisible, setMobileDockVisible] = useState(false)
   const ring = sustainSeconds(sustain)
 
   const [synth] = useState(() => new Synth())
@@ -203,6 +204,7 @@ export default function App() {
   const backgroundPlaybackKeyRef = useRef(null)
   const mediaActionsRef = useRef({})
   const draftRef = useRef(null)
+  const mobileDockAnchorRef = useRef(null)
   // Read from the synth's done callback, which is set up once per pass.
   const repeatRef = useRef(false)
   const startRef = useRef(null)
@@ -379,6 +381,25 @@ export default function App() {
     () => (sequences ? sequences.reduce((s, q) => s + q.notes.length, 0) : 0),
     [sequences]
   )
+  const canPlay = !!sequences && totalBeats > 0
+
+  useEffect(() => {
+    const anchor = mobileDockAnchorRef.current
+    if (!anchor || !canPlay) {
+      setMobileDockVisible(false)
+      return undefined
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      setMobileDockVisible(true)
+      return undefined
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setMobileDockVisible(!entry.isIntersecting),
+      { threshold: 0 }
+    )
+    observer.observe(anchor)
+    return () => observer.disconnect()
+  }, [canPlay])
 
   // Everything that changes the sound also invalidates a prepared track.
   const backgroundKey = useMemo(
@@ -981,15 +1002,15 @@ export default function App() {
     if (typeof MediaMetadata === 'undefined') return
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: sheetHint,
+        title: effectiveName,
         artist: 'Solfa Piano',
-        album: 'Solfa Piano',
+        album: meterLabel ? `${key} major · ${meterLabel}` : `${key} major`,
         artwork: mediaArtwork(),
       })
     } catch {
       /* metadata is optional */
     }
-  }, [sheetHint])
+  }, [effectiveName, key, meterLabel])
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.mediaSession) return
@@ -1294,7 +1315,7 @@ export default function App() {
         : `${activeParts.length} parts`
 
   return (
-    <div className="app">
+    <div className={`app${mobileDockVisible ? ' has-mobile-dock' : ''}`}>
       <header className="app-header">
         <div className="logo" aria-hidden="true">
           <span />
@@ -1579,6 +1600,7 @@ export default function App() {
         </section>
 
         <section className="card player-card">
+          <div className="mobile-dock-anchor" ref={mobileDockAnchorRef} aria-hidden="true" />
           <Controls
             canPlay={!!sequences && totalBeats > 0}
             isPlaying={isPlaying}
@@ -1684,7 +1706,10 @@ export default function App() {
         </section>
       </div>
       <MobileTransport
-        canPlay={!!sequences && totalBeats > 0}
+        visible={mobileDockVisible}
+        title={effectiveName}
+        subtitle={`Solfa Piano · ${key} major${meterLabel ? ` · ${meterLabel}` : ''}`}
+        canPlay={canPlay}
         isPlaying={isPlaying}
         isPaused={isPaused}
         mediaPlayback={!liveFallback}
