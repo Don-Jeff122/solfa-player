@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import DocumentViewer from './scanner/DocumentViewer.jsx'
 import GeminiDialog from './scanner/GeminiDialog.jsx'
 import ScanResults from './scanner/ScanResults.jsx'
@@ -17,6 +17,10 @@ import {
 } from '../lib/scan/geminiResults.js'
 import { runBatchScan } from '../lib/scan/batchScan.js'
 import { parseSolfa } from '../lib/parseSolfa.js'
+import {
+  createScannerSessionWriter,
+  loadScannerSession,
+} from '../lib/scannerSessionStore.js'
 
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/bmp,image/gif,application/pdf'
 const BATCH_DELAY_MS = 600
@@ -66,6 +70,33 @@ function pageNoun(count) {
   return count === 1 ? 'page' : 'pages'
 }
 
+function makeDocId() {
+  return (
+    globalThis.crypto?.randomUUID?.() ||
+    `scan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  )
+}
+
+function storageWarningFor(reason) {
+  const message = reason?.message || ''
+  if (reason?.name === 'QuotaExceededError' || /quota/i.test(message)) {
+    return 'This scan could not be saved because browser storage is full. Keep the scanner open or clear space on this device.'
+  }
+  return 'This scan could not be saved in this browser. Keep the scanner open to avoid losing it.'
+}
+
+async function openSourceDocument(file, { onProgress } = {}) {
+  const { openDocument } = await import('../lib/documentService.js')
+  return openDocument(file, { onProgress })
+}
+
+function restoredFile(record) {
+  return new File([record.blob], record.name, {
+    type: record.type || record.blob.type || '',
+    lastModified: record.lastModified || Date.now(),
+  })
+}
+
 export default function SheetScanner({ onApply, onClose }) {
   const [doc, setDoc] = useState(null)
   const [docInfo, setDocInfo] = useState(null)
@@ -89,6 +120,9 @@ export default function SheetScanner({ onApply, onClose }) {
   const [batchRunning, setBatchRunning] = useState(false)
   const [batchProgress, setBatchProgress] = useState('')
   const [batchFailures, setBatchFailures] = useState([])
+  const [restoring, setRestoring] = useState(true)
+  const [sourceMissing, setSourceMissing] = useState(false)
+  const [storageWarning, setStorageWarning] = useState('')
 
   const geminiEnabled = isGeminiConfigured()
   const docRef = useRef(null)
@@ -98,10 +132,176 @@ export default function SheetScanner({ onApply, onClose }) {
   const fileInputRef = useRef(null)
   const cameraInputRef = useRef(null)
   const scrollingRef = useRef('')
+  const docIdRef = useRef(null)
+  const hydratedRef = useRef(false)
+  const mountedRef = useRef(true)
+  const sessionMetaRef = useRef({})
+  const [writer] = useState(() => createScannerSessionWriter())
+
+  const sessionSnapshot = useCallback((overrides = {}) => {
+    const meta = sessionMetaRef.current
+    const pageResults = overrides.pageResults ?? [...pageMapRef.current.values()]
+    const info = overrides.docInfo ?? meta.docInfo
+    if (!info && !pageResults.length) return null
+    return {
+      docId: overrides.docId ?? docIdRef.current,
+      scanMode: overrides.scanMode ?? meta.scanMode,
+      docInfo: info,
+      pageResults,
+      batchFailures: overrides.batchFailures ?? meta.batchFailures,
+      pageIndex: overrides.pageIndex ?? meta.pageIndex,
+      rotation: overrides.rotation ?? meta.rotation,
+      zoom: overrides.zoom ?? meta.zoom,
+    }
+  }, [])
+
+  function updateBatchFailures(compute) {
+    const next = compute(sessionMetaRef.current.batchFailures)
+    sessionMetaRef.current = {
+      ...sessionMetaRef.current,
+      batchFailures: next,
+    }
+    setBatchFailures(next)
+    return next
+  }
+
+  const persistSoon = useCallback(
+    (overrides) => {
+      if (!hydratedRef.current) return
+      const snapshot = sessionSnapshot(overrides)
+      if (snapshot) writer.save(snapshot)
+    },
+    [sessionSnapshot, writer]
+  )
+
+  function persistNow(overrides) {
+    if (!hydratedRef.current) return Promise.resolve({ ok: false })
+    const snapshot = sessionSnapshot(overrides)
+    if (!snapshot) return Promise.resolve({ ok: false })
+    return writer.saveNow(snapshot)
+  }
+
+  function flushSession() {
+    writer.flush().catch(() => {})
+  }
+
+  function handleClose() {
+    flushSession()
+    onClose?.()
+  }
 
   useEffect(() => {
     resultRef.current = result
   }, [result])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    writer.setErrorHandler((reason) => {
+      if (mountedRef.current) setStorageWarning(storageWarningFor(reason))
+    })
+    return () => writer.setErrorHandler(null)
+  }, [writer])
+
+  useEffect(() => {
+    let alive = true
+    loadScannerSession()
+      .then(async (session) => {
+        if (!alive) return
+        if (!session) {
+          hydratedRef.current = true
+          setRestoring(false)
+          return
+        }
+
+        docIdRef.current = session.docId
+        pageMapRef.current = new Map(
+          session.pageResults.map((page) => [page.pageNumber, page])
+        )
+        const merged = session.pageResults.length
+          ? mergePages(session.scanMode, session.pageResults)
+          : null
+        resultRef.current = merged
+        setResult(merged)
+        setScanMode(session.scanMode)
+        setDocInfo(session.docInfo)
+        setBatchFailures(session.batchFailures)
+        setPageIndex(session.pageIndex)
+        setActivePage(session.pageIndex + 1)
+        setRotation(session.rotation)
+        setZoom(session.zoom)
+        setNotice('Restored your previous scan from this device.')
+
+        if (!session.file) {
+          setSourceMissing(true)
+        } else {
+          setProgress('Restoring the document...')
+          setPreviewBusy(true)
+          try {
+            const handle = await openSourceDocument(restoredFile(session.file), {
+              onProgress: setProgress,
+            })
+            if (!alive) {
+              handle.close().catch(() => {})
+              return
+            }
+            docRef.current = handle
+            setDoc(handle)
+            setDocInfo({
+              name: handle.name,
+              kind: handle.kind,
+              pageCount: handle.pageCount,
+            })
+            const nextIndex = Math.min(session.pageIndex, handle.pageCount - 1)
+            setPageIndex(nextIndex)
+            setActivePage(nextIndex + 1)
+            setSourceMissing(false)
+          } catch {
+            if (!alive) return
+            setPreviewBusy(false)
+            setSourceMissing(true)
+            setNotice(
+              'Restored the last scan, but the source document could not be reopened. Your results are still available.'
+            )
+          }
+        }
+
+        if (!alive) return
+        hydratedRef.current = true
+        setRestoring(false)
+        setProgress('')
+      })
+      .catch((reason) => {
+        if (!alive) return
+        hydratedRef.current = true
+        setRestoring(false)
+        setStorageWarning(storageWarningFor(reason))
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    sessionMetaRef.current = {
+      docInfo,
+      scanMode,
+      batchFailures,
+      pageIndex,
+      rotation,
+      zoom,
+    }
+  }, [docInfo, scanMode, batchFailures, pageIndex, rotation, zoom])
+
+  useEffect(() => {
+    if (!hydratedRef.current || restoring) return
+    persistSoon()
+  }, [scanMode, batchFailures, pageIndex, rotation, zoom, docInfo, restoring, persistSoon])
 
   useEffect(() => {
     scrollingRef.current = document.body.style.overflow
@@ -113,8 +313,9 @@ export default function SheetScanner({ onApply, onClose }) {
       const current = docRef.current
       docRef.current = null
       current?.close?.().catch?.(() => {})
+      writer.flush().catch(() => {})
     }
-  }, [])
+  }, [writer])
 
   useEffect(() => {
     if (!batchRunning) return
@@ -149,6 +350,7 @@ export default function SheetScanner({ onApply, onClose }) {
     batchAbortRef.current?.abort()
     batchAbortRef.current = null
     pageMapRef.current = new Map()
+    docIdRef.current = null
     const current = docRef.current
     docRef.current = null
     setDoc(null)
@@ -170,6 +372,9 @@ export default function SheetScanner({ onApply, onClose }) {
     setBatchProgress('')
     setBatchFailures([])
     setGeminiBusy(false)
+    setRestoring(false)
+    setSourceMissing(false)
+    setStorageWarning('')
     if (current) {
       try {
         await current.close()
@@ -177,6 +382,7 @@ export default function SheetScanner({ onApply, onClose }) {
         /* the handle is already gone */
       }
     }
+    await writer.clear()
   }
 
   function storePage(page) {
@@ -184,6 +390,7 @@ export default function SheetScanner({ onApply, onClose }) {
     const merged = mergePages(scanMode, [...pageMapRef.current.values()])
     resultRef.current = merged
     setResult(merged)
+    persistNow({ pageResults: [...pageMapRef.current.values()] })
     return merged
   }
 
@@ -246,9 +453,10 @@ export default function SheetScanner({ onApply, onClose }) {
     try {
       const page = await scanPage(pageNumber)
       storePage(page)
-      setBatchFailures((current) =>
+      const nextFailures = updateBatchFailures((current) =>
         current.filter((failure) => failure.pageNumber !== pageNumber)
       )
+      persistNow({ batchFailures: nextFailures })
       setError(null)
       setActivePage(pageNumber)
       setPageIndex(pageNumber - 1)
@@ -287,9 +495,10 @@ export default function SheetScanner({ onApply, onClose }) {
     setBatchTargets(pages)
     setBatchRunning(true)
     setGeminiBusy(true)
-    setBatchFailures((current) =>
+    const clearedFailures = updateBatchFailures((current) =>
       current.filter((failure) => !pages.includes(failure.pageNumber))
     )
+    persistNow({ batchFailures: clearedFailures })
     setBatchProgress(`Reading page ${pages[0]} (1 of ${pages.length})...`)
     setNotice(
       `Reading ${pages.length} ${pageNoun(pages.length)} with Gemini. Keep this tab open.`
@@ -309,21 +518,26 @@ export default function SheetScanner({ onApply, onClose }) {
         onPageSuccess: (pageNumber, page, info) => {
           lastPage = pageNumber
           storePage(page)
-          setBatchFailures((current) =>
+          const nextFailures = updateBatchFailures((current) =>
             current.filter((failure) => failure.pageNumber !== pageNumber)
           )
+          persistNow({
+            pageResults: [...pageMapRef.current.values()],
+            batchFailures: nextFailures,
+          })
           setBatchProgress(
             `Page ${pageNumber} read (${info.index + 1} of ${info.total}).`
           )
         },
         onPageFailure: (failure, info) => {
           failures.push(failure)
-          setBatchFailures((current) => [
+          const nextFailures = updateBatchFailures((current) => [
             ...current.filter(
               (existing) => existing.pageNumber !== failure.pageNumber
             ),
             failure,
           ])
+          persistNow({ batchFailures: nextFailures })
           setBatchProgress(
             `Page ${failure.pageNumber} failed (${info.index + 1} of ${info.total}).`
           )
@@ -413,8 +627,11 @@ export default function SheetScanner({ onApply, onClose }) {
     batchAbortRef.current?.abort()
     batchAbortRef.current = null
     pageMapRef.current = new Map()
+    docIdRef.current = null
     setError(null)
     setNotice('')
+    setStorageWarning('')
+    setSourceMissing(false)
     setGeminiOpen(false)
     setGeminiError('')
     setGeminiScope('page')
@@ -433,6 +650,7 @@ export default function SheetScanner({ onApply, onClose }) {
     const previous = docRef.current
     docRef.current = null
     setDoc(null)
+    setDocInfo(null)
     if (previous) {
       try {
         await previous.close()
@@ -442,20 +660,38 @@ export default function SheetScanner({ onApply, onClose }) {
     }
 
     try {
-      const { openDocument } = await import('../lib/documentService.js')
-      const handle = await openDocument(file, { onProgress: setProgress })
-      docRef.current = handle
-      setDoc(handle)
-      setDocInfo({
+      const handle = await openSourceDocument(file, { onProgress: setProgress })
+      const info = {
         name: handle.name,
         kind: handle.kind,
         pageCount: handle.pageCount,
-      })
+      }
+      const docId = makeDocId()
+      docIdRef.current = docId
+      docRef.current = handle
+      setDoc(handle)
+      setDocInfo(info)
       setPageIndex(0)
       setActivePage(1)
       setRotation(0)
       setZoom(1)
       setProgress('')
+      const snapshot = sessionSnapshot({
+        docId,
+        docInfo: info,
+        pageResults: [],
+        batchFailures: [],
+        pageIndex: 0,
+        rotation: 0,
+        zoom: 1,
+      })
+      Promise.all([
+        writer.saveNow(snapshot),
+        writer.saveFile(file, docId),
+      ]).then(([stateResult, fileResult]) => {
+        if (!mountedRef.current) return
+        if (stateResult?.ok && fileResult?.ok) setStorageWarning('')
+      })
     } catch (reason) {
       setError(reason?.message || 'Could not open that file.')
       setPreviewBusy(false)
@@ -497,6 +733,11 @@ export default function SheetScanner({ onApply, onClose }) {
     setBatchTargets([])
     setBatchProgress('')
     setBatchFailures([])
+    persistNow({
+      scanMode: next,
+      pageResults: [],
+      batchFailures: [],
+    })
     setNotice(
       next === 'general'
         ? 'General document mode reads the page as editable text.'
@@ -536,6 +777,7 @@ export default function SheetScanner({ onApply, onClose }) {
     const merged = mergePages(scanMode, [...pageMapRef.current.values()])
     resultRef.current = merged
     setResult(merged)
+    persistSoon({ pageResults: [...pageMapRef.current.values()] })
   }
 
   function sendSheetToPlayer(sheetText, key) {
@@ -550,6 +792,7 @@ export default function SheetScanner({ onApply, onClose }) {
       return
     }
     setError(null)
+    flushSession()
     onApply?.(value, parsed.result.key || key)
   }
 
@@ -627,7 +870,7 @@ export default function SheetScanner({ onApply, onClose }) {
                   className={`scanner-mode-tab${scanMode === mode.id ? ' active' : ''}`}
                   key={mode.id}
                   onClick={() => changeScanMode(mode.id)}
-                  disabled={geminiBusy}
+                  disabled={geminiBusy || restoring}
                   title={mode.hint}
                 >
                   {mode.label}
@@ -638,7 +881,7 @@ export default function SheetScanner({ onApply, onClose }) {
           <button
             type="button"
             className="scanner-close"
-            onClick={() => onClose?.()}
+            onClick={handleClose}
             disabled={batchRunning}
             aria-label="Close scanner"
           >
@@ -647,13 +890,25 @@ export default function SheetScanner({ onApply, onClose }) {
         </header>
 
         {notice && <p className="scanner-notice">{notice}</p>}
+        {storageWarning && (
+          <p className="scanner-warn" role="status">
+            {storageWarning}
+          </p>
+        )}
         {error && !doc && !hasResults && (
           <p className="scanner-error" role="alert">
             {error}
           </p>
         )}
 
-        {!doc && !hasResults ? (
+        {restoring ? (
+          <div className="dropzone busy">
+            <div className="dropzone-body">
+              <div className="spinner" aria-hidden="true" />
+              <p>{progress || 'Restoring your previous scan...'}</p>
+            </div>
+          </div>
+        ) : !doc && !hasResults ? (
           loading ? (
             <div className="dropzone busy">
               <div className="dropzone-body">
@@ -744,6 +999,14 @@ export default function SheetScanner({ onApply, onClose }) {
               </div>
             )}
 
+            {sourceMissing && !doc && (
+              <p className="scanner-warn">
+                The saved source file could not be reopened. Your results are still
+                available for editing, copying and playing. Start over to upload the
+                source again.
+              </p>
+            )}
+
             <div className={`scanner-split${doc ? '' : ' text-only'}`}>
               {doc && (
                 <DocumentViewer
@@ -781,11 +1044,11 @@ export default function SheetScanner({ onApply, onClose }) {
                 onTextChange={updatePageText}
                 onUse={useInPlayer}
                 onUseAll={useAllPagesInPlayer}
-                onReadGemini={openGemini}
-                onReadAll={() => openGeminiAll()}
+                onReadGemini={doc ? openGemini : null}
+                onReadAll={doc ? () => openGeminiAll() : null}
                 readAllLabel={readAllLabel}
                 remainingCount={remainingPages.length}
-                onRetryFailed={() => openGeminiAll([...failedPageNumbers])}
+                onRetryFailed={doc ? () => openGeminiAll([...failedPageNumbers]) : null}
                 failedPages={failedPages}
                 canMergeAll={canMergeAll}
                 geminiBusy={geminiBusy}
@@ -800,6 +1063,10 @@ export default function SheetScanner({ onApply, onClose }) {
           {geminiEnabled
             ? 'Gemini reads the page image on Google servers. Recognition can be wrong, so check every row, key, lyric and word against the original before using it in the player. The API key stays on the proxy.'
             : 'Gemini is not configured for this build. Set VITE_GEMINI_PROXY_URL and rebuild to enable page reading.'}
+        </p>
+        <p className="scanner-note">
+          The source file and Gemini results are kept in this browser so you can resume.
+          Clear document deletes the saved copy from this device.
         </p>
 
         <input
