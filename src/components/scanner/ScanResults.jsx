@@ -39,10 +39,30 @@ function downloadText(text, name) {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function pageText(page, generalMode) {
+function pageText(page) {
   if (!page) return ''
-  return generalMode ? page.exactText || '' : page.sheetText || ''
+  return page.mode === 'general' ? page.exactText || '' : page.sheetText || ''
 }
+
+const KEY_OPTIONS = [
+  'C',
+  'C#',
+  'Db',
+  'D',
+  'D#',
+  'Eb',
+  'E',
+  'F',
+  'F#',
+  'Gb',
+  'G',
+  'G#',
+  'Ab',
+  'A',
+  'A#',
+  'Bb',
+  'B',
+]
 
 export default function ScanResults({
   result,
@@ -50,6 +70,7 @@ export default function ScanResults({
   pageCount = 1,
   onPageChange,
   onTextChange,
+  onReconvert,
   onUse,
   onUseAll,
   onReadGemini,
@@ -66,29 +87,34 @@ export default function ScanResults({
   const [copied, setCopied] = useState('')
   const copyTimer = useRef(0)
   const textRef = useRef(null)
-  const generalMode = scanMode === 'general'
+  const generalMode = result?.mode === 'general' || (!result && scanMode === 'general')
   const busy = geminiBusy
 
   useEffect(() => () => clearTimeout(copyTimer.current), [])
 
   const pages = result?.pageResults || []
   const page = pages.find((entry) => entry.pageNumber === activePage) || null
+  const pageGeneral = page?.mode === 'general'
   const combined = combineGeminiPagesForCopy(pages, {
     mode: generalMode ? 'general' : 'solfa',
     pageCount,
     fallbackKey: result?.key,
   })
   const allText = combined.text
-  const exact = pageText(page, generalMode)
+  const exact = pageText(page)
   const lineCount = allText.split('\n').filter(Boolean).length
   const key = result?.key
   const needsCorrection = !generalMode && Boolean(result?.parseError)
   const pageParseError = page?.playable?.parseError
   const pageNeedsCorrection =
-    !generalMode &&
+    !pageGeneral &&
     Boolean(
       pageParseError !== undefined ? pageParseError : result?.parseError
     )
+  const keyOptions =
+    page?.conversion?.tonic && !KEY_OPTIONS.includes(page.conversion.tonic)
+      ? [...KEY_OPTIONS, page.conversion.tonic]
+      : KEY_OPTIONS
 
   async function copy(label, text) {
     if (!text) return
@@ -143,8 +169,8 @@ export default function ScanResults({
             is sent. You can also read every page one at a time.
           </p>
           <ul>
-            <li>Solfa mode returns editable four-part sheet rows.</li>
-            <li>General document mode returns editable page text.</li>
+            <li>Automatic mode detects solfa, staff notation or page text.</li>
+            <li>Staff notation is converted to editable four-part tonic solfa.</li>
             <li>Check the result against the original before using it.</li>
           </ul>
           {onReadGemini && (
@@ -168,7 +194,9 @@ export default function ScanResults({
       ) : (
         <>
           <div className="scanner-meta">
-            <span className="tag">Gemini AI</span>
+            <span className="tag">
+              {page?.sourceKind === 'musicxml' ? 'MusicXML' : 'Gemini AI'}
+            </span>
             <span className="tag">
               {result.pages} page{result.pages === 1 ? '' : 's'}
             </span>
@@ -176,6 +204,9 @@ export default function ScanResults({
               {lineCount} line{lineCount === 1 ? '' : 's'}
             </span>
             {key && <span className="tag">key {key}</span>}
+            {page?.uncertainCount > 0 && (
+              <span className="tag warn">{page.uncertainCount} low-confidence</span>
+            )}
             <span
               className={
                 generalMode ? 'tag' : needsCorrection ? 'tag warn' : 'tag good'
@@ -183,9 +214,11 @@ export default function ScanResults({
             >
               {generalMode
                 ? 'document text'
-                : needsCorrection
-                  ? 'needs correction'
-                  : 'solfa sheet'}
+                : page?.notationType === 'staff'
+                  ? 'staff to solfa'
+                  : needsCorrection
+                    ? 'needs correction'
+                    : 'solfa sheet'}
             </span>
           </div>
 
@@ -283,16 +316,76 @@ export default function ScanResults({
             <>
               <div className="scanner-pane-head">
                 <label className="scanner-preview-label" htmlFor="scanner-source-text">
-                  {generalMode ? 'Document transcription' : 'Gemini solfa sheet'} - page{' '}
-                  {activePage}
+                  {pageGeneral
+                    ? 'Document transcription'
+                    : page.sourceKind === 'musicxml'
+                      ? 'MusicXML solfa sheet'
+                      : page.notationType === 'staff'
+                        ? 'Staff notes converted to solfa'
+                        : 'Gemini solfa sheet'}{' '}
+                  - page {activePage}
                 </label>
-                <span className="tag">Gemini AI</span>
+                <span className="tag">
+                  {page.sourceKind === 'musicxml' ? 'local conversion' : 'Gemini AI'}
+                </span>
               </div>
               <p className="scanner-pane-note">
-                {generalMode
+                {pageGeneral
                   ? 'Read by Gemini from the page image. Check every line against the original; AI recognition can be wrong.'
-                  : 'Read by Gemini from the page image. Check every row, key and lyric against the original before playing it.'}
+                  : page.sourceKind === 'musicxml'
+                    ? 'Converted from the MusicXML score on this device. Check the key, rhythm, notes and voices against the original.'
+                    : page.notationType === 'staff'
+                      ? 'Read as staff notation and converted to tonic solfa. Check every note, key, rhythm and voice against the original.'
+                      : 'Read by Gemini from the page image. Check every row, key and lyric against the original before playing it.'}
               </p>
+              {page.sourceScore && (
+                <div className="scanner-actions">
+                  <label>
+                    Key{' '}
+                    <select
+                      value={page.conversion?.tonic || key || 'C'}
+                      onChange={(event) =>
+                        onReconvert?.(page.pageNumber, {
+                          tonic: event.target.value,
+                          mode: page.conversion?.mode || 'major',
+                        })
+                      }
+                      disabled={busy}
+                    >
+                      {keyOptions.map((option) => (
+                        <option value={option} key={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Mode{' '}
+                    <select
+                      value={page.conversion?.mode || 'major'}
+                      onChange={(event) =>
+                        onReconvert?.(page.pageNumber, {
+                          tonic: page.conversion?.tonic || key || 'C',
+                          mode: event.target.value,
+                        })
+                      }
+                      disabled={busy}
+                    >
+                      <option value="major">major</option>
+                      <option value="minor">minor</option>
+                    </select>
+                  </label>
+                  {page.conversion?.displayKey && (
+                    <span className="tag">{page.conversion.displayKey}</span>
+                  )}
+                  {page.uncertainCount > 0 && (
+                    <span className="tag warn">
+                      {page.uncertainCount} note
+                      {page.uncertainCount === 1 ? '' : 's'} need checking
+                    </span>
+                  )}
+                </div>
+              )}
               <textarea
                 id="scanner-source-text"
                 ref={textRef}
@@ -302,7 +395,7 @@ export default function ScanResults({
                 rows={Math.min(20, Math.max(8, exact.split('\n').length + 2))}
                 spellCheck={false}
                 disabled={busy}
-                aria-label={`Gemini ${generalMode ? 'text' : 'solfa sheet'} for page ${activePage}`}
+                aria-label={`${pageGeneral ? 'Text' : 'Solfa sheet'} for page ${activePage}`}
               />
               <div className="scanner-actions">
                 <button
@@ -314,12 +407,12 @@ export default function ScanResults({
                   {copied === 'page'
                     ? pages.length > 1
                       ? `Copied page ${page.pageNumber}`
-                      : generalMode
+                      : pageGeneral
                         ? 'Copied page text'
                         : 'Copied sheet'
                     : pages.length > 1
                       ? `Copy page ${page.pageNumber}`
-                      : generalMode
+                      : pageGeneral
                         ? 'Copy page text'
                         : 'Copy sheet'}
                 </button>
@@ -341,7 +434,7 @@ export default function ScanResults({
                     Download .txt
                   </button>
                 )}
-                {!generalMode && (
+                {!pageGeneral && (
                   <>
                     <button
                       type="button"

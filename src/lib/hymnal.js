@@ -20,8 +20,14 @@ import { LETTER_TO_SOLFA } from './notes.js'
 
 export const HYMN_WORDS = Object.freeze({
   ...LETTER_TO_SOLFA,
+  do: 'do',
+  re: 're',
+  mi: 'mi',
+  fa: 'fa',
   so: 'so',
   sol: 'so',
+  la: 'la',
+  ti: 'ti',
   di: 'di',
   ri: 'ri',
   fi: 'fi',

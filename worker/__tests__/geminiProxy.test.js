@@ -56,6 +56,47 @@ const invalidSolfaResult = {
     },
   ],
 }
+const staffResult = {
+  mode: 'staff',
+  notationType: 'staff',
+  title: 'Staff Hymn',
+  key: '',
+  metre: '',
+  composer: '',
+  headerLines: [],
+  systems: [],
+  plainText: 'A staff hymn',
+  warnings: [],
+  staff: {
+    title: 'Staff Hymn',
+    composer: '',
+    key: { fifths: 0, mode: 'major', tonic: 'C' },
+    time: { beats: 4, beatType: 4 },
+    parts: [
+      {
+        name: 'Soprano',
+        clef: 'G2',
+        measures: [
+          {
+            number: '1',
+            notes: [
+              {
+                pitch: { step: 'C', alter: 0, octave: 5 },
+                rest: false,
+                duration: 4,
+                voice: '1',
+                tieStart: false,
+                tieStop: false,
+                confidence: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    warnings: [],
+  },
+}
 
 function request(body, overrides = {}) {
   return new Request('https://proxy.test/', {
@@ -104,6 +145,43 @@ describe('Gemini proxy request', () => {
     expect(prompt).toMatch(/lyrics array, not in cells/)
   })
 
+  it('asks for a notation decision in automatic mode', () => {
+    const built = buildGeminiRequest('auto', 'cGFnZQ==', 'image/jpeg')
+    const prompt = built.input[0].text
+
+    expect(prompt).toMatch(/decide what notation/i)
+    expect(prompt).toContain('notationType')
+    expect(prompt).toContain('staff')
+    expect(built.response_format.schema.properties.notationType.enum).toEqual([
+      'solfa',
+      'staff',
+      'mixed',
+      'text',
+    ])
+    expect(built.response_format.schema.required).toContain('notationType')
+    expect(built.response_format.schema.required).not.toContain('staff')
+  })
+
+  it('asks for structured staff notes in staff mode', () => {
+    const built = buildGeminiRequest('staff', 'cGFnZQ==', 'image/jpeg')
+    const prompt = built.input[0].text
+
+    expect(prompt).toMatch(/key signature and time signature/i)
+    expect(prompt).toContain('key.fifths')
+    expect(built.response_format.schema.properties.staff.type).toBe('object')
+    expect(built.response_format.schema.properties.staff.required).toContain(
+      'parts'
+    )
+  })
+
+  it('uses the lighter model list in general mode', () => {
+    const built = buildGeminiRequest('general', 'cGFnZQ==', 'image/jpeg')
+
+    expect(built.model).toBe('gemini-3.8-flash')
+    expect(built.input[0].text).toMatch(/all readable text/i)
+    expect(built.input[0].text).toContain('Leave systems empty')
+  })
+
   it('extracts text from the current interaction response shapes', () => {
     expect(extractOutputText({ output_text: '{"ok":true}' })).toBe('{"ok":true}')
     expect(
@@ -130,6 +208,51 @@ describe('Gemini proxy handler', () => {
     expect(response.status).toBe(200)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin)
     expect(await response.json()).toEqual({ data: result })
+  })
+
+  it('accepts a staff page from an automatic request', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ output_text: JSON.stringify(staffResult) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    const response = await handleRequest(
+      request(pageBody({ mode: 'auto' })),
+      env,
+      fetchImpl
+    )
+
+    expect(response.status).toBe(200)
+    const payload = await response.json()
+    expect(payload.data.mode).toBe('staff')
+    expect(payload.data.staff.parts).toHaveLength(1)
+  })
+
+  it('retries in staff mode when the first score is malformed', async () => {
+    const models = []
+    const malformed = {
+      ...staffResult,
+      staff: { title: '', composer: '', parts: [], warnings: [] },
+    }
+    const fetchImpl = async (_url, options) => {
+      const body = JSON.parse(options.body)
+      models.push(body.model)
+      const output = body.model === 'gemini-3.8-flash' ? malformed : staffResult
+      return new Response(JSON.stringify({ output_text: JSON.stringify(output) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const response = await handleRequest(
+      request(pageBody({ mode: 'staff' })),
+      env,
+      fetchImpl
+    )
+
+    expect(response.status).toBe(200)
+    expect(models).toEqual(['gemini-3.8-flash', 'gemini-3.6-flash'])
+    expect((await response.json()).data).toEqual(staffResult)
   })
 
   it('answers the CORS preflight for an allowed origin', async () => {

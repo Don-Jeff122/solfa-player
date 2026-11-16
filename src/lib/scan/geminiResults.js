@@ -166,10 +166,9 @@ export function mergeGeminiSolfaPages(pages = []) {
 
   const key = firstKey(ordered.map((page) => page.playable || page))
   const pageSheets = ordered.map((page) => page.sheetText).filter(Boolean)
-  const sheetText =
-    pageSheets.length === ordered.length
-      ? pageSheets.join('\n\n')
-      : assembleHymnalSheetLayout({ key, headerLines: sheetHeaderLines, systems })
+  const sheetText = systems.length
+    ? assembleHymnalSheetLayout({ key, headerLines: sheetHeaderLines, systems })
+    : pageSheets.join('\n\n')
   const text = sheetText || assembleHymnalSheet({ key, systems })
   const parsed = parseSolfa(sheetText)
   const parseError = parsed.ok ? null : parsed.error?.message || 'The notes could not be read.'
@@ -205,6 +204,18 @@ export function mergeGeminiSolfaPages(pages = []) {
     parseError,
     error: ok ? null : 'No playable Gemini solfa was found.',
   }
+}
+
+export function mergeGeminiPages(pages = [], mode = 'solfa') {
+  if (mode === 'general') return mergeGeminiGeneralPages(pages)
+  if (mode !== 'auto') return mergeGeminiSolfaPages(pages)
+  const ordered = orderedPages(pages)
+  const playable = ordered.filter((page) => {
+    const result = page.playable || page
+    return Boolean(result?.ok) && Boolean(result.systemsData?.length || pageSheet(page).trim())
+  })
+  if (!playable.length) return mergeGeminiGeneralPages(pages)
+  return mergeGeminiSolfaPages(pages)
 }
 
 export function mergeGeminiGeneralPages(pages = []) {

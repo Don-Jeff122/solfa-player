@@ -4,8 +4,8 @@ const STORE_NAME = 'session'
 const STATE_KEY = 'state'
 const FILE_KEY = 'source'
 const STATE_VERSION = 1
-const SCAN_MODES = new Set(['solfa', 'general'])
-const DOC_KINDS = new Set(['pdf', 'image'])
+const SCAN_MODES = new Set(['auto', 'solfa', 'staff', 'general'])
+const DOC_KINDS = new Set(['pdf', 'image', 'score'])
 
 let dbPromise = null
 
@@ -126,7 +126,9 @@ function normalizeDocInfo(value) {
       ? value.name.trim().slice(0, 240)
       : kind === 'pdf'
         ? 'Scanned PDF'
-        : 'Scanned image'
+        : kind === 'score'
+          ? 'MusicXML score'
+          : 'Scanned image'
   return { name, kind, pageCount }
 }
 

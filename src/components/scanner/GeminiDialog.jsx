@@ -22,8 +22,15 @@ function GeminiDialogContent({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [busy, onCancel])
 
-  const solfa = mode !== 'general'
   const allPages = scope === 'all'
+  const resultLabel =
+    mode === 'general'
+      ? 'editable document text'
+      : mode === 'staff'
+        ? 'staff notes converted to tonic solfa'
+        : mode === 'auto'
+          ? 'detected solfa, staff notation or text'
+          : 'an editable four-part solfa sheet'
   const noun = count === 1 ? 'page' : 'pages'
   const title = allPages ? 'Read pages with Gemini' : 'Read with Gemini'
 
@@ -45,8 +52,7 @@ function GeminiDialogContent({
             <h3>{title}</h3>
             <p>
               Gemini will read {allPages ? `${count} ${noun}, one at a time,` : 'this page'}{' '}
-              and return{' '}
-              {solfa ? 'an editable four-part solfa sheet' : 'editable document text'}.
+              and return {resultLabel}.
               {allPages
                 ? ' Each page image is sent separately.'
                 : ' Only the current page image is sent.'}

@@ -1,5 +1,7 @@
 const DOH_KEY_RE = /\bdoh\s*[:=]\s*([a-gA-G])([#b\u266d\u266f]?)/i
 const KEY_RE = /\b(?:key|tonic)\s*[:=]?\s*([a-gA-G])([#b\u266d\u266f]?)/i
+const METER_RE =
+  /^\s*(?:(?:meter|time)\s*[:=]?\s*)?[1-9]\d*\s*\/\s*[1-9]\d*\s*$|^\s*(?:C|c|C\|)\s*$/
 
 function normalizeAccidental(letter, accidental) {
   const mark = accidental === '\u266d' ? 'b' : accidental === '\u266f' ? '#' : accidental || ''
@@ -37,7 +39,7 @@ function sheetSafeLine(text) {
 
 function sheetSafeHeader(text) {
   const value = String(text ?? '').trim()
-  if (!value || keyFromHymnalText(value)) return value
+  if (!value || keyFromHymnalText(value) || METER_RE.test(value)) return value
   return sheetSafeLine(value)
 }
 

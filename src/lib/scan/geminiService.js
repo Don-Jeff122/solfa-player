@@ -4,6 +4,7 @@ import {
   keyFromHymnalText,
 } from './geminiSheet.js'
 import { validateSolfaSystems } from './solfaValidation.js'
+import { createStaffPage } from './staffConversion.js'
 
 export const GEMINI_CONSENT_KEY = 'solfa-gemini-consent-v1'
 
@@ -117,14 +118,25 @@ export function normalizeGeminiResult(raw) {
     return { ok: false, error: 'Gemini returned an unreadable result.' }
   }
 
-  const mode = raw.mode === 'solfa' || raw.mode === 'text' ? raw.mode : null
+  const notationType = ['solfa', 'staff', 'mixed', 'text'].includes(raw.notationType)
+    ? raw.notationType
+    : null
+  const declaredMode = ['solfa', 'text', 'staff'].includes(raw.mode) ? raw.mode : null
+  const systems = normalizeSystems(raw.systems)
+  const plainText = cleanText(raw.plainText)
+  const staff = raw.staff && typeof raw.staff === 'object' ? raw.staff : null
+
+  let mode = declaredMode
+  if (notationType === 'staff' || declaredMode === 'staff') mode = 'staff'
+  else if (!mode && (notationType === 'solfa' || notationType === 'mixed')) mode = 'solfa'
+  else if (!mode && notationType === 'text') mode = 'text'
+
   if (!mode) {
     return { ok: false, error: 'Gemini did not say whether the page was solfa or text.' }
   }
-
-  const systems = mode === 'solfa' ? normalizeSystems(raw.systems) : []
-  const plainText = cleanText(raw.plainText)
-
+  if (mode === 'staff' && !staff) {
+    return { ok: false, error: 'Gemini found staff notation but returned no readable notes.' }
+  }
   if (mode === 'solfa' && !systems.length) {
     return { ok: false, error: 'Gemini found no playable solfa rows on this page.' }
   }
@@ -136,13 +148,15 @@ export function normalizeGeminiResult(raw) {
     ok: true,
     value: {
       mode,
+      notationType: notationType || (mode === 'solfa' ? 'solfa' : mode),
       title: cleanLine(raw.title),
       key: normalizeKey(raw.key),
       metre: cleanLine(raw.metre),
       composer: cleanLine(raw.composer),
       headerLines: stringList(raw.headerLines, 30),
-      systems,
+      systems: mode === 'solfa' ? systems : [],
       plainText,
+      staff: mode === 'staff' ? staff : null,
       warnings: stringList(raw.warnings, 20),
     },
   }
@@ -195,6 +209,7 @@ export function createGeminiHymnalPage(pageNumber, value) {
     sheetText,
     sheetHeaderLines: headerLines,
     sourceKind: 'gemini-ai',
+    notationType: 'solfa',
     mode: 'hymnal',
     key,
     playable: {
@@ -214,6 +229,43 @@ export function createGeminiHymnalPage(pageNumber, value) {
   }
 
   return { ok: true, page }
+}
+
+export function createGeminiStaffPage(pageNumber, value) {
+  if (!value?.staff) {
+    return { ok: false, error: 'Gemini returned no staff notes to convert.' }
+  }
+  const staff = {
+    ...value.staff,
+    title: value.staff.title || value.title || '',
+    composer: value.staff.composer || value.composer || '',
+    warnings: [...(value.staff.warnings || []), ...(value.warnings || [])],
+  }
+  const result = createStaffPage(pageNumber, staff, {
+    source: 'gemini',
+    title: value.title || '',
+  })
+  if (!result.ok) return result
+  result.page.exactText = value.plainText || result.page.sheetText
+  return result
+}
+
+export function createGeminiPage(pageNumber, value, requestedMode = 'auto') {
+  if (value?.mode === 'staff' || value?.notationType === 'staff') {
+    return createGeminiStaffPage(pageNumber, value)
+  }
+  if (value?.mode === 'text') {
+    if (requestedMode === 'staff') {
+      return {
+        ok: false,
+        error: 'Gemini found text, not staff notation, on this page. Retry or switch the mode.',
+      }
+    }
+    const general = createGeminiGeneralPage(pageNumber, value)
+    if (general.ok) general.page.notationType = 'text'
+    return general
+  }
+  return createGeminiHymnalPage(pageNumber, value)
 }
 
 export function createGeminiGeneralPage(pageNumber, value) {
@@ -243,8 +295,8 @@ export function createGeminiGeneralPage(pageNumber, value) {
 export async function requestGeminiScan({ blob, mode, signal } = {}) {
   const url = geminiProxyUrl()
   if (!url) throw new Error('Gemini AI is not configured for this build.')
-  if (mode !== 'solfa' && mode !== 'general') {
-    throw new Error('Choose Solfa sheet or General document mode first.')
+  if (!['auto', 'solfa', 'staff', 'general'].includes(mode)) {
+    throw new Error('Choose Automatic, Solfa sheet, Staff notation or General document mode first.')
   }
   if (!blob || typeof blob.arrayBuffer !== 'function') {
     throw new Error('The page image could not be prepared for Gemini.')

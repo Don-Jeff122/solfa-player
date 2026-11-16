@@ -1,4 +1,5 @@
 import { validateSolfaSystems } from '../src/lib/scan/solfaValidation.js'
+import { validateStaffScore } from '../src/lib/scan/staffConversion.js'
 
 // Solfa transcription needs the strongest OCR. Keep the lite models last.
 const SOLFA_MODELS = [
@@ -36,10 +37,91 @@ const DEFAULT_ORIGINS = [
 ]
 const MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
+const STAFF_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: { type: 'string' },
+    composer: { type: 'string' },
+    key: {
+      type: 'object',
+      properties: {
+        fifths: { type: 'integer' },
+        mode: { type: 'string', enum: ['major', 'minor'] },
+        tonic: { type: 'string' },
+      },
+      required: ['fifths', 'mode', 'tonic'],
+    },
+    time: {
+      type: 'object',
+      properties: {
+        beats: { type: 'integer' },
+        beatType: { type: 'integer' },
+      },
+      required: ['beats', 'beatType'],
+    },
+    parts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          clef: { type: 'string' },
+          measures: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                number: { type: 'string' },
+                notes: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      pitch: {
+                        type: 'object',
+                        properties: {
+                          step: { type: 'string', enum: ['A', 'B', 'C', 'D', 'E', 'F', 'G'] },
+                          alter: { type: 'integer' },
+                          octave: { type: 'integer' },
+                        },
+                        required: ['step', 'alter', 'octave'],
+                      },
+                      rest: { type: 'boolean' },
+                      duration: { type: 'number' },
+                      voice: { type: 'string' },
+                      tieStart: { type: 'boolean' },
+                      tieStop: { type: 'boolean' },
+                      confidence: { type: 'number' },
+                    },
+                    required: [
+                      'pitch',
+                      'rest',
+                      'duration',
+                      'voice',
+                      'tieStart',
+                      'tieStop',
+                      'confidence',
+                    ],
+                  },
+                },
+              },
+              required: ['number', 'notes'],
+            },
+          },
+        },
+        required: ['name', 'clef', 'measures'],
+      },
+    },
+    warnings: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['title', 'composer', 'key', 'time', 'parts', 'warnings'],
+}
+
 const SCHEMA = {
   type: 'object',
   properties: {
-    mode: { type: 'string', enum: ['solfa', 'text'] },
+    mode: { type: 'string', enum: ['solfa', 'text', 'staff'] },
+    notationType: { type: 'string', enum: ['solfa', 'staff', 'mixed', 'text'] },
     title: { type: 'string' },
     key: { type: 'string' },
     metre: { type: 'string' },
@@ -67,10 +149,12 @@ const SCHEMA = {
       },
     },
     plainText: { type: 'string' },
+    staff: STAFF_SCHEMA,
     warnings: { type: 'array', items: { type: 'string' } },
   },
   required: [
     'mode',
+    'notationType',
     'title',
     'key',
     'metre',
@@ -84,7 +168,7 @@ const SCHEMA = {
 
 const SOLFA_PROMPT = `Transcribe this tonic solfa hymnal page. Return one JSON object matching the response schema.
 Read only what is visible. Never invent notes, lyrics, headers or keys.
-Set mode to "solfa" when the page contains printed tonic solfa notation.
+Set mode to "solfa" and notationType to "solfa" when the page contains printed tonic solfa notation.
 Preserve the printed title, key, metre, composer and header lines exactly.
 For each printed system, return its voice rows in printed order as S, A, T and B.
 Split each row into cells at barlines. Each cell is one printed bar.
@@ -94,23 +178,53 @@ Never use any other letter in a cell, especially not n, h or x. Do not put barli
 Every voice row in one system should have the same number of cells; add a warning if a printed row is incomplete.
 If a single note cannot be read, write 0 for that beat and add a warning naming the system and voice. Do not guess a note.
 Keep printed lyrics in the system's lyrics array, not in cells. Put the complete page text in plainText.
-If the page is not solfa, set mode to "text" and put the complete readable text in plainText.
+If the page is not solfa, set mode to "text" and notationType to "text", then put the complete readable text in plainText.
 Add a short warning for every uncertain row, key or lyric instead of guessing.`
 
+const STAFF_PROMPT = `Read this page as staff notation and return the notes as structured JSON. Return one JSON object matching the response schema.
+Set mode to "staff" and notationType to "staff". Put a short readable summary or any printed text in plainText.
+Read the key signature and time signature. Set key.fifths from -7 to 7, key.mode to major or minor, and key.tonic to the printed key name.
+Durations are in quarter-note beats: quarter = 1, eighth = 0.5, half = 2, dotted half = 3, whole = 4.
+Return one part for each printed staff or voice. When four unnamed SATB staves are visible, name them Soprano, Alto, Tenor and Bass from top to bottom.
+Return each printed bar as one measure. Keep rests, ties, slurs and voices exactly where printed.
+For a chord, return only the highest note in that voice and add a warning naming the bar.
+Set every note confidence from 0 to 1. Never invent a note: use a rest and a warning instead.
+Add a short warning for an uncertain clef, key, time signature, voice, duration or note.`
+
+const AUTO_PROMPT = `Read this hymn page and decide what notation it contains. Return one JSON object matching the response schema.
+Set notationType to "solfa", "staff", "mixed" or "text".
+If printed tonic solfa exists, set mode to "solfa" and transcribe it into systems exactly as the solfa instructions below describe. Set notationType to "solfa", or "mixed" when staff notation is also printed.
+If there is staff notation but no printed tonic solfa, set mode to "staff", notationType to "staff", and return the notes in the staff object. Do not invent solfa syllables for visible staff notes.
+If there is only readable prose, set mode to "text", notationType to "text", and put it in plainText.
+Prefer printed tonic solfa when both forms are present; do not replace visible solfa with a new transcription.
+Read only what is visible. Never invent notes, lyrics, headers or keys.
+For solfa, return one row per printed voice in each system as S, A, T and B. Split rows into cells at barlines; cells contain notation only.
+Allowed solfa notation is the printed syllables with octave marks, rests (0), holds (-), slurs (_), dots (.) and printed beat markers (: and /) only. Never use n, h or x in a cell.
+For staff notes, durations are in quarter-note beats. Return one measure per printed bar and one part per printed staff or voice.
+Set every staff note confidence from 0 to 1. For a chord, return only the highest note in that voice and add a warning.
+Add a short warning for every uncertain row, note, key, metre or voice instead of guessing.`
+
 const GENERAL_PROMPT = `Transcribe all readable text on this page in natural reading order. Return one JSON object matching the response schema.
-Set mode to "text" and put the complete transcription in plainText.
+Set mode to "text" and notationType to "text". Put the complete transcription in plainText.
 Preserve line breaks, headings, punctuation, symbols and wording. Do not normalise, summarise or invent text.
 Leave systems empty. Add a short warning for anything uncertain instead of guessing.`
 
+function promptForMode(mode) {
+  if (mode === 'staff') return STAFF_PROMPT
+  if (mode === 'auto') return AUTO_PROMPT
+  if (mode === 'solfa') return SOLFA_PROMPT
+  return GENERAL_PROMPT
+}
+
 function modelsForMode(mode) {
-  return mode === 'solfa' ? SOLFA_MODELS : GENERAL_MODELS
+  return mode === 'general' ? GENERAL_MODELS : SOLFA_MODELS
 }
 
 export function buildGeminiRequest(mode, data, mimeType) {
   return {
     model: modelsForMode(mode)[0],
     input: [
-      { type: 'text', text: mode === 'solfa' ? SOLFA_PROMPT : GENERAL_PROMPT },
+      { type: 'text', text: promptForMode(mode) },
       { type: 'image', data, mime_type: mimeType, resolution: 'high' },
     ],
     response_format: {
@@ -175,7 +289,7 @@ function validateGeminiOutput(mode, output) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) {
     return { ok: false, error: 'Gemini returned an unreadable result.' }
   }
-  if (output.mode !== 'solfa' && output.mode !== 'text') {
+  if (!['solfa', 'text', 'staff'].includes(output.mode)) {
     return { ok: false, error: 'Gemini did not return a readable page mode.' }
   }
   if (mode === 'general') {
@@ -183,7 +297,20 @@ function validateGeminiOutput(mode, output) {
       ? { ok: true }
       : { ok: false, error: 'Gemini returned no page text.' }
   }
-  if (output.mode === 'text') {
+  const staffPage = output.mode === 'staff' || output.notationType === 'staff'
+  if (staffPage) {
+    if (mode === 'solfa') {
+      return { ok: false, error: 'Gemini found staff notation, not printed solfa.' }
+    }
+    const checked = validateStaffScore(output.staff)
+    return checked.ok
+      ? { ok: true }
+      : { ok: false, error: checked.error, structured: true }
+  }
+  if (mode === 'staff') {
+    return { ok: false, error: 'Gemini found no readable staff notation.' }
+  }
+  if (output.mode === 'text' || output.notationType === 'text') {
     return String(output.plainText || '').trim()
       ? { ok: true }
       : { ok: false, error: 'Gemini returned no page text.' }
@@ -301,8 +428,13 @@ export async function handleRequest(request, env = {}, fetchImpl = fetch) {
   }
 
   const mode = body?.mode
-  if (mode !== 'solfa' && mode !== 'general') {
-    return jsonResponse({ error: 'Choose solfa or general mode.' }, 400, origin, env)
+  if (!['auto', 'solfa', 'staff', 'general'].includes(mode)) {
+    return jsonResponse(
+      { error: 'Choose automatic, solfa, staff or general mode.' },
+      400,
+      origin,
+      env
+    )
   }
 
   const mimeType = String(body?.image?.mimeType || '').toLowerCase()

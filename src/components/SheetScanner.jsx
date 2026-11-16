@@ -3,8 +3,7 @@ import DocumentViewer from './scanner/DocumentViewer.jsx'
 import GeminiDialog from './scanner/GeminiDialog.jsx'
 import ScanResults from './scanner/ScanResults.jsx'
 import {
-  createGeminiGeneralPage,
-  createGeminiHymnalPage,
+  createGeminiPage,
   hasGeminiConsent,
   isGeminiConfigured,
   rememberGeminiConsent,
@@ -12,29 +11,44 @@ import {
 } from '../lib/scan/geminiService.js'
 import {
   canMergeSolfaPages,
-  mergeGeminiGeneralPages,
-  mergeGeminiSolfaPages,
+  mergeGeminiPages,
 } from '../lib/scan/geminiResults.js'
 import { runBatchScan } from '../lib/scan/batchScan.js'
 import { parseSolfa } from '../lib/parseSolfa.js'
+import {
+  isMusicXmlFile,
+  readMusicXmlFile,
+} from '../lib/music/musicXml.js'
+import { createMusicXmlPage, reconvertStaffPage } from '../lib/scan/staffConversion.js'
 import {
   createScannerSessionWriter,
   loadScannerSession,
 } from '../lib/scannerSessionStore.js'
 
-const ACCEPT = 'image/png,image/jpeg,image/webp,image/bmp,image/gif,application/pdf'
+const ACCEPT =
+  'image/png,image/jpeg,image/webp,image/bmp,image/gif,application/pdf,.xml,.musicxml,.mxl'
 const BATCH_DELAY_MS = 600
 
 const SCAN_MODES = [
   {
+    id: 'auto',
+    label: 'Automatic',
+    hint: 'Let Gemini detect solfa, staff notation or text',
+  },
+  {
     id: 'solfa',
     label: 'Solfa sheet',
-    hint: 'Ask Gemini for playable tonic solfa rows',
+    hint: 'Read printed tonic solfa rows',
+  },
+  {
+    id: 'staff',
+    label: 'Staff notation',
+    hint: 'Read staff notes and convert them to tonic solfa',
   },
   {
     id: 'general',
     label: 'General document',
-    hint: 'Ask Gemini for editable page text',
+    hint: 'Read editable page text',
   },
 ]
 
@@ -42,9 +56,7 @@ function mergePages(mode, pages) {
   const ordered = [...pages].sort(
     (a, b) => (a.index ?? a.pageNumber - 1) - (b.index ?? b.pageNumber - 1)
   )
-  return mode === 'general'
-    ? mergeGeminiGeneralPages(ordered)
-    : mergeGeminiSolfaPages(ordered)
+  return mergeGeminiPages(ordered, mode)
 }
 
 function canvasToJpeg(canvas, quality = 0.92) {
@@ -111,7 +123,7 @@ export default function SheetScanner({ onApply, onClose }) {
   const [activePage, setActivePage] = useState(1)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState('')
-  const [scanMode, setScanMode] = useState('solfa')
+  const [scanMode, setScanMode] = useState('auto')
   const [geminiOpen, setGeminiOpen] = useState(false)
   const [geminiBusy, setGeminiBusy] = useState(false)
   const [geminiError, setGeminiError] = useState('')
@@ -409,13 +421,10 @@ export default function SheetScanner({ onApply, onClose }) {
     }
     const value = await requestGeminiScan({
       blob,
-      mode: scanMode === 'general' ? 'general' : 'solfa',
+      mode: scanMode,
       signal,
     })
-    const converted =
-      scanMode === 'general'
-        ? createGeminiGeneralPage(pageNumber, value)
-        : createGeminiHymnalPage(pageNumber, value)
+    const converted = createGeminiPage(pageNumber, value, scanMode)
     if (!converted.ok) throw new Error(converted.error)
     return converted.page
   }
@@ -460,10 +469,11 @@ export default function SheetScanner({ onApply, onClose }) {
       setError(null)
       setActivePage(pageNumber)
       setPageIndex(pageNumber - 1)
+      const kind = page.mode === 'general' ? 'text' : page.notationType || 'solfa'
       setNotice(
-        scanMode === 'general'
+        page.mode === 'general'
           ? `Page ${pageNumber} read by Gemini. Check every line against the original.`
-          : `Page ${pageNumber} read by Gemini. Check every row, key and lyric before playing.`
+          : `Page ${pageNumber} read as ${kind}. Check every row, note, key and voice before playing.`
       )
       setGeminiOpen(false)
     } catch (reason) {
@@ -660,6 +670,46 @@ export default function SheetScanner({ onApply, onClose }) {
     }
 
     try {
+      if (isMusicXmlFile(file)) {
+        setProgress('Reading the MusicXML score...')
+        const score = await readMusicXmlFile(file)
+        const converted = createMusicXmlPage(1, score, { name: file.name })
+        if (!converted.ok) throw new Error(converted.error)
+        const page = converted.page
+        const docId = makeDocId()
+        const info = { name: file.name, kind: 'score', pageCount: 1 }
+        docIdRef.current = docId
+        pageMapRef.current.set(1, page)
+        const merged = mergePages('auto', [page])
+        resultRef.current = merged
+        setResult(merged)
+        setDocInfo(info)
+        setDoc(null)
+        setPreview(null)
+        setPreviewBusy(false)
+        setPageIndex(0)
+        setActivePage(1)
+        setRotation(0)
+        setZoom(1)
+        setProgress('')
+        setNotice(
+          `Converted ${file.name} to tonic solfa. Check the key, rhythm, notes and voices before playing.`
+        )
+        const snapshot = sessionSnapshot({
+          docId,
+          docInfo: info,
+          pageResults: [page],
+          batchFailures: [],
+          pageIndex: 0,
+          rotation: 0,
+          zoom: 1,
+        })
+        writer.saveNow(snapshot).then((stateResult) => {
+          if (mountedRef.current && stateResult?.ok) setStorageWarning('')
+        })
+        return
+      }
+
       const handle = await openSourceDocument(file, { onProgress: setProgress })
       const info = {
         name: handle.name,
@@ -738,11 +788,13 @@ export default function SheetScanner({ onApply, onClose }) {
       pageResults: [],
       batchFailures: [],
     })
-    setNotice(
-      next === 'general'
-        ? 'General document mode reads the page as editable text.'
-        : 'Solfa mode reads the page as playable four-part notation.'
-    )
+    const messages = {
+      auto: 'Automatic mode detects solfa, staff notation or plain text.',
+      solfa: 'Solfa mode reads printed tonic solfa rows as playable notation.',
+      staff: 'Staff mode reads staff notes and converts them to tonic solfa.',
+      general: 'General document mode reads the page as editable text.',
+    }
+    setNotice(messages[next] || messages.auto)
   }
 
   function updatePageText(pageNumber, text) {
@@ -750,7 +802,7 @@ export default function SheetScanner({ onApply, onClose }) {
     if (!page) return
     setError(null)
     const updated =
-      scanMode === 'general'
+      page.mode === 'general'
         ? { ...page, exactText: text }
         : {
             ...page,
@@ -780,6 +832,28 @@ export default function SheetScanner({ onApply, onClose }) {
     persistSoon({ pageResults: [...pageMapRef.current.values()] })
   }
 
+  function reconvertPage(pageNumber, changes) {
+    const page = pageMapRef.current.get(pageNumber)
+    if (!page) return
+    const converted = reconvertStaffPage(page, changes)
+    if (!converted.ok) {
+      setError(converted.error || 'The staff notes could not be converted again.')
+      return
+    }
+    setError(null)
+    pageMapRef.current.set(pageNumber, converted.page)
+    const merged = mergePages(
+      scanMode === 'general' ? 'auto' : scanMode,
+      [...pageMapRef.current.values()]
+    )
+    resultRef.current = merged
+    setResult(merged)
+    persistSoon({ pageResults: [...pageMapRef.current.values()] })
+    setNotice(
+      `Page ${pageNumber} converted as ${converted.page.conversion.displayKey}. Check the notes before playing.`
+    )
+  }
+
   function sendSheetToPlayer(sheetText, key) {
     const value = sheetText?.trim()
     if (!value) {
@@ -798,10 +872,14 @@ export default function SheetScanner({ onApply, onClose }) {
 
   function useInPlayer(pageNumber = activePage) {
     const current = resultRef.current
-    if (!current || scanMode === 'general') return
+    if (!current) return
     const page = current.pageResults?.find((entry) => entry.pageNumber === pageNumber)
     if (!page) {
-      setError(`Page ${pageNumber} has not been read by Gemini yet.`)
+      setError(`Page ${pageNumber} has not been read yet.`)
+      return
+    }
+    if (page.mode === 'general') {
+      setError('This page was read as text and cannot be played.')
       return
     }
     sendSheetToPlayer(
@@ -812,7 +890,11 @@ export default function SheetScanner({ onApply, onClose }) {
 
   function useAllPagesInPlayer() {
     const current = resultRef.current
-    if (!current || scanMode === 'general') return
+    if (!current) return
+    if (current.mode === 'general') {
+      setError('These pages were read as text and cannot be played.')
+      return
+    }
     if (!canMergeSolfaPages(current.pageResults || [])) {
       setError(
         'These pages use different keys or are not consecutive. Use one page at a time instead.'
@@ -845,7 +927,7 @@ export default function SheetScanner({ onApply, onClose }) {
           ? `Read all ${pageCount} pages`
           : `Read remaining ${remainingPages.length} ${pageNoun(remainingPages.length)}`
   const canMergeAll =
-    scanMode !== 'general' && canMergeSolfaPages(result?.pageResults || [])
+    result?.mode !== 'general' && canMergeSolfaPages(result?.pageResults || [])
 
   return (
     <div className="scanner-overlay" role="dialog" aria-modal="true" aria-label="Gemini sheet reader">
@@ -855,11 +937,15 @@ export default function SheetScanner({ onApply, onClose }) {
             <h2>
               {scanMode === 'general'
                 ? 'Read a document with Gemini'
-                : 'Read a solfa sheet with Gemini'}
+                : scanMode === 'staff'
+                  ? 'Read staff notation'
+                  : scanMode === 'auto'
+                    ? 'Read a hymn page'
+                    : 'Read a solfa sheet with Gemini'}
             </h2>
             <p className="scanner-subtitle">
-              Upload an image or PDF, then read the current page or all pages one at
-              a time. Only the pages you read are uploaded.
+              Upload an image, PDF, MusicXML or MXL file, then read the current page or
+              all pages one at a time. Only the pages you choose are uploaded.
             </p>
             <div className="scanner-mode-tabs" role="tablist" aria-label="Page type">
               {SCAN_MODES.map((mode) => (
@@ -973,12 +1059,24 @@ export default function SheetScanner({ onApply, onClose }) {
                 <span className="scanner-file-name" title={docInfo?.name}>
                   {docInfo?.name}
                 </span>
-                <span className="tag">{docInfo?.kind === 'pdf' ? 'PDF' : 'image'}</span>
+                <span className="tag">
+                  {docInfo?.kind === 'pdf'
+                    ? 'PDF'
+                    : docInfo?.kind === 'score'
+                      ? 'score'
+                      : 'image'}
+                </span>
                 <span className="tag">
                   {pageCount} page{pageCount === 1 ? '' : 's'}
                 </span>
                 <span className="tag">
-                  {scanMode === 'general' ? 'document text' : 'solfa'}
+                  {docInfo?.kind === 'score'
+                    ? 'staff notation'
+                    : scanMode === 'general'
+                      ? 'document text'
+                      : scanMode === 'auto'
+                        ? 'automatic'
+                        : scanMode}
                 </span>
                 <button
                   type="button"
@@ -991,8 +1089,12 @@ export default function SheetScanner({ onApply, onClose }) {
               </div>
             ) : (
               <div className="scanner-filebar">
-                <span className="scanner-file-name">Gemini result</span>
-                <span className="tag">Gemini AI</span>
+                <span className="scanner-file-name">
+                  {docInfo?.kind === 'score' ? docInfo.name : 'Gemini result'}
+                </span>
+                <span className="tag">
+                  {docInfo?.kind === 'score' ? 'MusicXML' : 'Gemini AI'}
+                </span>
                 <button type="button" className="btn btn-quiet" onClick={closeDocument}>
                   Start over
                 </button>
@@ -1042,6 +1144,7 @@ export default function SheetScanner({ onApply, onClose }) {
                 pageCount={pageCount}
                 onPageChange={changePage}
                 onTextChange={updatePageText}
+                onReconvert={reconvertPage}
                 onUse={useInPlayer}
                 onUseAll={useAllPagesInPlayer}
                 onReadGemini={doc ? openGemini : null}

@@ -3,6 +3,7 @@ import {
   blobToBase64,
   createGeminiGeneralPage,
   createGeminiHymnalPage,
+  createGeminiPage,
   normalizeGeminiResult,
   requestGeminiScan,
 } from '../geminiService.js'
@@ -10,6 +11,7 @@ import {
   canMergeSolfaPages,
   combineGeminiPagesForCopy,
   mergeGeminiGeneralPages,
+  mergeGeminiPages,
   mergeGeminiSolfaPages,
 } from '../geminiResults.js'
 import { parseSolfa } from '../../parseSolfa.js'
@@ -36,6 +38,48 @@ const solfa = {
   systems,
   plainText: '',
   warnings: [],
+}
+
+const staffResult = {
+  mode: 'staff',
+  notationType: 'staff',
+  title: 'Staff Hymn',
+  key: '',
+  metre: '',
+  composer: '',
+  headerLines: [],
+  systems: [],
+  plainText: '',
+  warnings: [],
+  staff: {
+    title: 'Staff Hymn',
+    composer: '',
+    key: { fifths: 0, mode: 'major', tonic: 'C' },
+    time: { beats: 4, beatType: 4 },
+    parts: [
+      {
+        name: 'Soprano',
+        clef: 'G2',
+        measures: [
+          {
+            number: '1',
+            notes: [
+              {
+                pitch: { step: 'C', alter: 0, octave: 5 },
+                rest: false,
+                duration: 4,
+                voice: '1',
+                tieStart: false,
+                tieStop: false,
+                confidence: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    warnings: [],
+  },
 }
 
 describe('Gemini result validation', () => {
@@ -68,6 +112,16 @@ describe('Gemini result validation', () => {
 
     expect(checked.ok).toBe(false)
     expect(checked.error).toMatch(/solfa or text/i)
+  })
+
+  it('normalizes a structured staff result for automatic detection', () => {
+    const checked = normalizeGeminiResult(staffResult)
+
+    expect(checked.ok).toBe(true)
+    expect(checked.value.mode).toBe('staff')
+    expect(checked.value.notationType).toBe('staff')
+    expect(checked.value.staff.parts).toHaveLength(1)
+    expect(checked.value.systems).toEqual([])
   })
 })
 
@@ -115,6 +169,39 @@ describe('Gemini page conversion', () => {
     const merged = mergeGeminiSolfaPages([converted.page])
     expect(merged.parseError).toMatch(/Unrecognized note "n"/)
     expect(merged.warnings.join(' ')).toMatch(/Check the notes/)
+  })
+
+  it('builds a staff page and merges it through automatic mode', () => {
+    const checked = normalizeGeminiResult(staffResult)
+    const converted = createGeminiPage(3, checked.value, 'auto')
+
+    expect(converted.ok).toBe(true)
+    expect(converted.page.pageNumber).toBe(3)
+    expect(converted.page.sourceKind).toBe('gemini-staff')
+    expect(converted.page.notationType).toBe('staff')
+    expect(converted.page.sheetText).toContain("Doh = C")
+    expect(converted.page.sheetText).toContain("do'")
+
+    const merged = mergeGeminiPages([converted.page], 'auto')
+    expect(merged.ok).toBe(true)
+    expect(merged.mode).toBe('hymnal')
+    expect(parseSolfa(merged.sheetText).ok).toBe(true)
+  })
+
+  it('routes a text page from automatic mode to the general pipeline', () => {
+    const checked = normalizeGeminiResult({
+      ...solfa,
+      notationType: 'text',
+      mode: 'text',
+      systems: [],
+      plainText: 'Praise the Lord',
+    })
+    const converted = createGeminiPage(1, checked.value, 'auto')
+
+    expect(converted.ok).toBe(true)
+    expect(converted.page.mode).toBe('general')
+    expect(converted.page.notationType).toBe('text')
+    expect(mergeGeminiPages([converted.page], 'auto').mode).toBe('general')
   })
 
   it('does not turn a text result into a solfa page', () => {
