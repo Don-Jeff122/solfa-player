@@ -19,6 +19,7 @@ Live at <https://don-jeff122.github.io/solfa-player/>.
   tabs or apps, or locking the screen
 - Record and download a WAV of the playback
 - Read an image or PDF with Gemini and turn a solfa page into playable music
+- Convert a printed PDF score to downloadable MusicXML with Audiveris OMR
 - Four-part Gemini results keep their sheet-style layout: title, key, metre,
   composer, braced Soprano/Alto/Tenor/Bass rows and lyric lines, all editable
 - General document mode returns editable text with TXT export
@@ -48,6 +49,11 @@ Pages subpath.
 Gemini page reading requires the repository Actions variable
 `GEMINI_PROXY_URL` to be set to the deployed Worker URL before building. If it
 is empty, the build succeeds and the Gemini scanner button stays hidden.
+
+PDF-to-MusicXML recognition requires a separate Java/Audiveris backend. Set the
+repository Actions variable `OMR_API_URL` to that service's public HTTPS URL
+before building. If it is empty, the build succeeds and the **PDF to MusicXML**
+button stays hidden. See `omr-service/README.md`.
 
 ## Offline use (installable PWA)
 
@@ -108,6 +114,28 @@ unsupported notation, it retries the next model; if every model fails, it
 returns the last editable sheet with a correction warning instead of silently
 guessing notes. General document mode keeps the lighter fallback order.
 
+## PDF to MusicXML (OMR)
+
+The optional **PDF to MusicXML** button sends a printed PDF to a separately
+hosted Audiveris 5.11.0 service, polls staged progress, validates the generated
+partwise MusicXML, and offers the file for download. It does not send the PDF to
+Gemini, and it does not convert the result into tonic solfa automatically.
+
+Audiveris handles printed notation, not handwriting. Poor scans, unusual
+engraving, and dense four-part layouts still need manual review. For SATB
+scores, the validator reports whether Soprano/Alto/Tenor/Bass names are clear
+and never invents missing voice names.
+
+Run the backend locally:
+
+```sh
+npm --prefix omr-service start
+```
+
+Then set `VITE_OMR_API_URL=http://127.0.0.1:8788` in `.env.local`. The backend
+needs Java and Audiveris, or Docker; GitHub Pages cannot host it. Audiveris is
+AGPL V3, so review `omr-service/README.md` before distributing a container.
+
 ## Layout
 
 - `src/lib/parseSolfa.js`: solfa text -> parsed notes/parts
@@ -115,8 +143,12 @@ guessing notes. General document mode keeps the lighter fallback order.
   `S:` part rows, `Doh = A` headers)
 - `src/audio/Synth.js`, `src/audio/voices.js`: Web Audio synthesizer and
   instrument presets (all plain data, fully unit-tested)
-- `src/components/`: piano, controls, saved sheets, Gemini sheet reader
+- `src/components/`: piano, controls, saved sheets, Gemini sheet reader,
+  PDF-to-MusicXML dialog
 - `src/lib/documentService.js`: lazy image/PDF page rendering with pdf.js
+- `src/lib/omr/omrService.js`: OMR upload, polling, download and errors
+- `omr-service/`: standalone Audiveris backend, validation, Dockerfile and API
+  documentation
 - `src/lib/scan/geminiService.js`: Gemini consent, request and result validation
 - `src/lib/scan/geminiResults.js`: combines per-page Gemini results
 - `src/lib/scan/geminiSheet.js`: Gemini sheet assembly helpers

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Controls from './components/Controls.jsx'
 import MobileTransport from './components/MobileTransport.jsx'
+import OmrConverter from './components/OmrConverter.jsx'
 import Piano from './components/Piano.jsx'
 import SaveSheet from './components/SaveSheet.jsx'
 import SavedSheets from './components/SavedSheets.jsx'
 import SheetScanner from './components/SheetScanner.jsx'
+import { isOmrConfigured } from './lib/omr/omrService.js'
 import { isGeminiConfigured } from './lib/scan/geminiService.js'
 import { Synth } from './audio/Synth.js'
 import {
@@ -131,6 +133,7 @@ function slurRuns(notes) {
 
 export default function App() {
   const geminiEnabled = isGeminiConfigured()
+  const omrEnabled = isOmrConfigured()
   const [initialDraft] = useState(() => loadDraft())
   const [text, setText] = useState(() => initialDraft?.text ?? DEFAULT_TEXT)
   const [uiKey, setUiKey] = useState(() => initialDraft?.uiKey ?? 'C')
@@ -138,6 +141,7 @@ export default function App() {
   const [tempo, setTempo] = useState(() => initialDraft?.tempo ?? 90)
   const [octave, setOctave] = useState(() => initialDraft?.octave ?? 0)
   const [showScanner, setShowScanner] = useState(false)
+  const [showOmr, setShowOmr] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [activeMidi, setActiveMidi] = useState(() => new Set())
   const [noteIndexes, setNoteIndexes] = useState([])
@@ -1336,11 +1340,26 @@ export default function App() {
           <div className="card-head">
             <h2>Music sheet</h2>
             <div className="head-actions">
+              {omrEnabled && (
+                <button
+                  type="button"
+                  className={`btn btn-small${showOmr ? ' active' : ''}`}
+                  onClick={() => {
+                    setShowScanner(false)
+                    setShowOmr((v) => !v)
+                  }}
+                >
+                  PDF to MusicXML
+                </button>
+              )}
               {geminiEnabled && (
                 <button
                   type="button"
                   className={`btn btn-small${showScanner ? ' active' : ''}`}
-                  onClick={() => setShowScanner((v) => !v)}
+                  onClick={() => {
+                    setShowOmr(false)
+                    setShowScanner((v) => !v)
+                  }}
                 >
                   Read with Gemini
                 </button>
@@ -1705,6 +1724,7 @@ export default function App() {
           </p>
         </section>
       </div>
+      {showOmr && omrEnabled && <OmrConverter onClose={() => setShowOmr(false)} />}
       <MobileTransport
         visible={mobileDockVisible}
         title={effectiveName}

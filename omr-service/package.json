@@ -1,0 +1,13 @@
+{
+  "name": "solfa-omr-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Audiveris-backed PDF to MusicXML service for Solfa Piano",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

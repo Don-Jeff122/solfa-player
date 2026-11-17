@@ -27,6 +27,7 @@ jobs:
       - run: npm run build
         env:
           VITE_GEMINI_PROXY_URL: ${{ vars.GEMINI_PROXY_URL }}
+          VITE_OMR_API_URL: ${{ vars.OMR_API_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

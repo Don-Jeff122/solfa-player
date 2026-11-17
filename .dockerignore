@@ -1,0 +1,7 @@
+**
+!omr-service
+!omr-service/**
+!src
+!src/lib
+!src/lib/music
+!src/lib/music/xml.js

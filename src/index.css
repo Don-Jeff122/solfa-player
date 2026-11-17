@@ -2724,3 +2724,479 @@ user-select: none;
     animation-duration: 2.4s;
   }
 }
+
+/* ---------- PDF to MusicXML ---------- */
+
+.omr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px;
+  overflow-y: auto;
+  background: rgba(3, 6, 14, 0.88);
+  backdrop-filter: blur(6px);
+}
+
+.omr-modal {
+  width: min(880px, 100%);
+  margin: auto;
+  border: 1px solid #24345c;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #0b1224, #080d19);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.65);
+}
+
+.omr-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px 0;
+}
+
+.omr-head h2 {
+  margin: 0;
+  font-size: clamp(20px, 2.5vw, 26px);
+}
+
+.omr-subtitle {
+  max-width: 72ch;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.omr-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--card-edge);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.omr-close:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.omr-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.omr-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 164px;
+  padding: 22px 18px;
+  border: 1.5px dashed #344777;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  font-family: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.omr-dropzone:hover:not(:disabled),
+.omr-dropzone:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.omr-dropzone.busy,
+.omr-dropzone:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.omr-drop-icon {
+  position: relative;
+  width: 34px;
+  height: 42px;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent 6px,
+      rgba(245, 185, 66, 0.45) 6px,
+      rgba(245, 185, 66, 0.45) 8px
+    );
+}
+
+.omr-drop-icon::after {
+  content: '';
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  background: #0b1224;
+}
+
+.omr-drop-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.omr-drop-note {
+  max-width: 54ch;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.omr-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.omr-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--card-edge);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.omr-file div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.omr-file strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.omr-file span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.omr-progress-card {
+  padding: 13px 14px;
+  border: 1px solid var(--card-edge);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.omr-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.omr-progress-head b {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.omr-progress-track {
+  height: 7px;
+  margin-top: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #070c19;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.omr-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transition: width 0.35s ease;
+}
+
+.omr-detail {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.omr-stages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 5px 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.omr-stage {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #7d89ad;
+  font-size: 11.5px;
+}
+
+.omr-stage-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 1.5px solid #43527e;
+  border-radius: 50%;
+}
+
+.omr-stage.done {
+  color: #9fe6c8;
+}
+
+.omr-stage.done .omr-stage-dot {
+  border-color: #2c6a54;
+  background: #2c6a54;
+}
+
+.omr-stage.active {
+  color: var(--text);
+}
+
+.omr-stage.active .omr-stage-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  animation: omr-pulse 1.4s ease-in-out infinite;
+}
+
+.omr-stage.failed {
+  color: var(--danger-text);
+}
+
+.omr-stage.failed .omr-stage-dot {
+  border-color: var(--danger-edge);
+  background: #ef4444;
+}
+
+.omr-error,
+.omr-warnings {
+  padding: 12px 14px;
+  border: 1px solid var(--danger-edge);
+  border-radius: 12px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.omr-error ul,
+.omr-warnings ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+}
+
+.omr-error details,
+.omr-preview {
+  margin-top: 8px;
+}
+
+.omr-error summary,
+.omr-preview summary {
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.omr-error pre,
+.omr-preview pre {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  background: #050a15;
+  color: #c9d4f0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.omr-warnings {
+  border-color: rgba(245, 185, 66, 0.38);
+  background: rgba(245, 185, 66, 0.08);
+  color: #f7dc9d;
+}
+
+.omr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.omr-result {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid rgba(44, 106, 84, 0.7);
+  border-radius: 13px;
+  background: rgba(20, 53, 43, 0.24);
+}
+
+.omr-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.omr-result-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.omr-badge {
+  padding: 3px 8px;
+  border: 1px solid #2c6a54;
+  border-radius: 999px;
+  background: rgba(44, 106, 84, 0.35);
+  color: #9fe6c8;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.omr-success {
+  margin: 0;
+  color: #9fe6c8;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.omr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 7px;
+}
+
+.omr-grid div {
+  padding: 8px 10px;
+  border: 1px solid var(--card-edge);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.omr-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+
+.omr-grid b {
+  display: block;
+  margin-top: 3px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.omr-parts {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.omr-footnote {
+  margin: 2px 0 0;
+  color: #7d89ad;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+@keyframes omr-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 185, 66, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 185, 66, 0.05);
+  }
+}
+
+@media (max-width: 640px) {
+  .omr-overlay {
+    padding: 8px;
+  }
+
+  .omr-modal {
+    border-radius: 12px;
+  }
+
+  .omr-head {
+    padding: 16px 14px 0;
+  }
+
+  .omr-body {
+    padding: 12px 14px 16px;
+  }
+
+  .omr-dropzone {
+    min-height: 140px;
+  }
+
+  .omr-actions .btn {
+    flex: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .omr-progress-track span {
+    transition: none;
+  }
+
+  .omr-stage.active .omr-stage-dot {
+    animation: none;
+  }
+}
