@@ -232,6 +232,13 @@ describe('MusicXML parsing', () => {
     expect(score.warnings.join(' ')).toMatch(/merged/)
   })
 
+  it('uses printed note lengths when Audiveris durations disagree', () => {
+    const xml =
+      '<score-partwise><work><work-title>Test</work-title></work><part-list><score-part id="P1"><part-name>Soprano</part-name></score-part></part-list><part id="P1"><measure number="1"><attributes><divisions>6</divisions><key><fifths>0</fifths></key><time><beats>3</beats><beat-type>4</beat-type></time></attributes><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><type>quarter</type></note></measure></part></score-partwise>'
+    const score = parseMusicXml(xml)
+    expect(score.parts[0].measures[0].notes[0].duration).toBe(1)
+  })
+
   it('rejects timewise scores and non-MusicXML files', () => {
     expect(() => parseMusicXml('<score-timewise/>')).toThrow(/Timewise/i)
     expect(() => parseMusicXml('<html/>')).toThrow(/not a MusicXML score/i)

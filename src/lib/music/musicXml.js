@@ -159,15 +159,16 @@ function pitchMidi(pitch) {
 }
 
 function noteDuration(note, divisions) {
+  const type = childText(note, 'type').toLowerCase()
+  const base = TYPE_BEATS[type]
+  const dots = children(note, 'dot').length
+  const printed = base ? base * (dots ? 1.5 ** dots : 1) : null
+  if (printed != null && !descendants(note, 'time-modification').length) return printed
   const duration = Number(childText(note, 'duration'))
   if (Number.isFinite(duration) && duration > 0) {
     return duration / (divisions > 0 ? divisions : 1)
   }
-  const type = childText(note, 'type').toLowerCase()
-  const base = TYPE_BEATS[type]
-  if (!base) return null
-  const dots = children(note, 'dot').length
-  return base * (dots ? 1.5 ** dots : 1)
+  return printed
 }
 
 function noteTies(note) {
@@ -217,6 +218,74 @@ function voiceName(partName, voice, totalVoices, genericPart) {
   if (totalVoices === 1) return base
   if (genericPart) return `${base} voice ${voice}`
   return `${base} ${voice}`
+}
+
+function normalizeMeasure(notes, targetBeats, measureNumber) {
+  const sorted = [...notes].sort((a, b) => (a.onset ?? 0) - (b.onset ?? 0))
+  const placed = []
+  let cursor = 0
+
+  const restNote = (duration, onset) => ({
+    pitch: null,
+    rest: true,
+    duration,
+    confidence: 1,
+    tieStart: false,
+    tieStop: false,
+    measure: measureNumber,
+    onset,
+  })
+
+  for (const note of sorted) {
+    const start = note.onset ?? cursor
+    if (start > cursor + 1e-6) {
+      placed.push(restNote(start - cursor, cursor))
+      cursor = start
+    }
+    const next = { ...note, onset: cursor }
+    placed.push(next)
+    cursor += next.duration
+  }
+
+  let total = cursor
+  if (targetBeats && total > targetBeats + 1e-6) {
+    const candidates = placed.filter((note) => !note.rest && note.duration > 0)
+    const excess = total - targetBeats
+    if (candidates.length) {
+      const longest = candidates.reduce((a, b) => (b.duration > a.duration ? b : a))
+      if (longest.duration - excess >= 0.125) longest.duration -= excess
+      else {
+        const factor = targetBeats / total
+        placed.forEach((note) => {
+          note.duration *= factor
+        })
+      }
+      total = targetBeats
+      let at = 0
+      for (const note of placed) {
+        note.onset = at
+        at += note.duration
+      }
+    }
+  }
+
+  if (!placed.length) return placed
+  const quantized = placed.map((note) => ({
+    ...note,
+    duration: Math.max(1 / 64, Math.round(note.duration * 64) / 64),
+  }))
+  const quantizedTotal = quantized.reduce((sum, note) => sum + note.duration, 0)
+  const remainder = Math.round((total - quantizedTotal) * 64) / 64
+  if (remainder && quantized.length) {
+    const last = quantized[quantized.length - 1]
+    last.duration = Math.max(1 / 64, Math.round((last.duration + remainder) * 64) / 64)
+  }
+  let at = 0
+  for (const note of quantized) {
+    note.onset = at
+    at += note.duration
+  }
+  return quantized
 }
 
 function averageMidi(part) {
@@ -337,6 +406,7 @@ export function parseMusicXml(text) {
 
       const number = measureNode.attrs?.number || String(measureIndex + 1)
       const measureNotes = new Map()
+      const measureOnsets = new Map()
 
       for (const noteNode of children(measureNode, 'note')) {
         if (hasChild(noteNode, 'grace')) continue
@@ -355,6 +425,9 @@ export function parseMusicXml(text) {
           )
           continue
         }
+        const chord = hasChild(noteNode, 'chord')
+        const onset = measureOnsets.get(voiceKey) || 0
+        if (!chord) measureOnsets.set(voiceKey, onset + duration)
         const rest = hasChild(noteNode, 'rest')
         const pitch = rest ? null : normalizePitch(child(noteNode, 'pitch'))
         if (!rest && !pitch) {
@@ -371,8 +444,9 @@ export function parseMusicXml(text) {
           tieStart: ties.start,
           tieStop: ties.stop,
           measure: number,
+          onset,
         }
-        if (hasChild(noteNode, 'chord') && list.length) {
+        if (chord && list.length) {
           const previous = list[list.length - 1]
           const previousMidi = pitchMidi(previous.pitch)
           const nextMidi = pitchMidi(pitch)
@@ -408,7 +482,10 @@ export function parseMusicXml(text) {
       const source = voices.get(artifact.key)
       const target = voices.get(artifact.targetKey)
       if (!source || !target) continue
-      source.forEach((notes, index) => target[index].push(...notes))
+      source.forEach((notes, index) => {
+        target[index].push(...notes)
+        target[index].sort((a, b) => (a.onset ?? 0) - (b.onset ?? 0))
+      })
       voices.delete(artifact.key)
     }
 
@@ -417,7 +494,7 @@ export function parseMusicXml(text) {
       const measures = measureMeta.map((meta, index) => ({
         number: meta.number,
         beats: meta.beats,
-        notes: measureNotes[index] || [],
+        notes: normalizeMeasure(measureNotes[index] || [], meta.beats, meta.number),
       }))
       const notes = measures.flatMap((measure) => measure.notes)
       if (!notes.length) continue
