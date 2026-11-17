@@ -81,6 +81,27 @@ describe('JobQueue', () => {
     expect(publicJob.warnings).toEqual(['w'])
   })
 
+  it('refuses work when the pending queue or job store is full', () => {
+    const queue = new JobQueue({ maxPending: 1, maxJobs: 2, logger: quiet })
+    const gate = deferred()
+    const first = queue.create({ fileName: 'a.pdf', fileSize: 1, tempDir: 'a', inputPath: 'a.pdf' })
+    const second = queue.create({ fileName: 'b.pdf', fileSize: 1, tempDir: 'b', inputPath: 'b.pdf' })
+    const third = queue.create({ fileName: 'c.pdf', fileSize: 1, tempDir: 'c', inputPath: 'c.pdf' })
+
+    expect(queue.enqueue(first.id, () => gate.promise)).toBe(true)
+    expect(queue.enqueue(second.id, () => gate.promise)).toBe(true)
+    expect(queue.enqueue(third.id, () => gate.promise)).toBe(false)
+    expect(queue.canAccept()).toBe(false)
+    expect(queue.stats()).toMatchObject({
+      jobs: 3,
+      active: 1,
+      pending: 1,
+      maxJobs: 2,
+      maxPending: 1,
+    })
+    gate.resolve({ xml: '<score/>' })
+  })
+
   it('removes only settled jobs and expires them after the TTL', () => {
     let now = 1000
     const queue = new JobQueue({ ttlMs: 100, now: () => now, logger: quiet })

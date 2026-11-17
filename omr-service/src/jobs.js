@@ -9,17 +9,36 @@ function clampProgress(value, fallback) {
 export class JobQueue {
   constructor({
     maxConcurrent = 1,
+    maxPending = 4,
+    maxJobs = 50,
     ttlMs = 60 * 60 * 1000,
     now = () => Date.now(),
     logger = console,
   } = {}) {
     this.maxConcurrent = Math.max(1, maxConcurrent)
+    this.maxPending = Math.max(1, maxPending)
+    this.maxJobs = Math.max(1, maxJobs)
     this.ttlMs = ttlMs
     this.now = now
     this.logger = logger
     this.jobs = new Map()
     this.pending = []
     this.active = 0
+  }
+
+  canAccept() {
+    this.cleanup()
+    return this.jobs.size < this.maxJobs && this.pending.length < this.maxPending
+  }
+
+  stats() {
+    return {
+      jobs: this.jobs.size,
+      active: this.active,
+      pending: this.pending.length,
+      maxJobs: this.maxJobs,
+      maxPending: this.maxPending,
+    }
   }
 
   create({ fileName, fileSize, tempDir, inputPath }) {
@@ -49,9 +68,10 @@ export class JobQueue {
   }
 
   enqueue(id, worker) {
+    if (this.pending.length >= this.maxPending) return false
     this.pending.push({ id, worker })
     this.drain()
-    return id
+    return true
   }
 
   update(id, patch = {}) {

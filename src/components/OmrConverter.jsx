@@ -18,6 +18,9 @@ const STAGES = [
 ]
 const STAGE_IDS = STAGES.map((stage) => stage.id)
 const PREVIEW_LIMIT = 24_000
+const POLL_RETRIES = 60
+const POLL_RETRY_MS = 2000
+const DOWNLOAD_RETRIES = 30
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB'
@@ -49,6 +52,38 @@ function wait(ms, signal) {
     }
     signal?.addEventListener?.('abort', onAbort, { once: true })
   })
+}
+
+function isRetryableRequest(reason) {
+  return !reason?.status || reason.status === 429 || reason.status >= 500
+}
+
+async function getJobWithRetry(id, { signal, onRetry }) {
+  for (let attempt = 0; attempt <= POLL_RETRIES; attempt += 1) {
+    try {
+      return await getOmrJob(id, { signal })
+    } catch (reason) {
+      if (signal?.aborted || reason?.name === 'AbortError') throw reason
+      if (!isRetryableRequest(reason) || attempt === POLL_RETRIES) throw reason
+      onRetry?.()
+      await wait(POLL_RETRY_MS, signal)
+    }
+  }
+  return null
+}
+
+async function fetchMusicXmlWithRetry(id, { signal, onRetry }) {
+  for (let attempt = 0; attempt <= DOWNLOAD_RETRIES; attempt += 1) {
+    try {
+      return await fetchOmrMusicXml(id, { signal })
+    } catch (reason) {
+      if (signal?.aborted || reason?.name === 'AbortError') throw reason
+      if (!isRetryableRequest(reason) || attempt === DOWNLOAD_RETRIES) throw reason
+      onRetry?.()
+      await wait(POLL_RETRY_MS, signal)
+    }
+  }
+  return ''
 }
 
 function keyLabel(key) {
@@ -101,6 +136,7 @@ export default function OmrConverter({ onClose }) {
   const [error, setError] = useState(null)
   const [uploadPct, setUploadPct] = useState(0)
   const [converting, setConverting] = useState(false)
+  const [connectionNotice, setConnectionNotice] = useState('')
 
   const inputRef = useRef(null)
   const abortRef = useRef(null)
@@ -120,6 +156,7 @@ export default function OmrConverter({ onClose }) {
     setXml('')
     setError(null)
     setUploadPct(0)
+    setConnectionNotice('')
   }
 
   function stopConversion() {
@@ -239,8 +276,16 @@ export default function OmrConverter({ onClose }) {
       let current = created
       while (current.status !== 'complete' && current.status !== 'failed') {
         await wait(900, controller.signal)
-        current = await getOmrJob(current.id, { signal: controller.signal })
+        current = await getJobWithRetry(current.id, {
+          signal: controller.signal,
+          onRetry: () => {
+            if (mountedRef.current) {
+              setConnectionNotice('Reconnecting to the OMR service...')
+            }
+          },
+        })
         if (!mountedRef.current) return
+        setConnectionNotice('')
         setJob(current)
       }
 
@@ -249,14 +294,25 @@ export default function OmrConverter({ onClose }) {
         return
       }
 
-      const generated = await fetchOmrMusicXml(current.id, { signal: controller.signal })
+      const generated = await fetchMusicXmlWithRetry(current.id, {
+        signal: controller.signal,
+        onRetry: () => {
+          if (mountedRef.current) {
+            setConnectionNotice('Reconnecting to download the MusicXML...')
+          }
+        },
+      })
       if (!mountedRef.current) return
+      setConnectionNotice('')
       setXml(generated)
     } catch (reason) {
       if (reason?.name === 'AbortError' || controller.signal.aborted) return
       setError(reason)
     } finally {
-      if (mountedRef.current) setConverting(false)
+      if (mountedRef.current) {
+        setConverting(false)
+        setConnectionNotice('')
+      }
       if (abortRef.current === controller) abortRef.current = null
     }
   }
@@ -265,6 +321,7 @@ export default function OmrConverter({ onClose }) {
   const progress = job ? job.progress : converting ? Math.min(5, Math.round(uploadPct * 0.05)) : 0
   const message = job?.message || (converting ? 'Uploading PDF' : 'Choose a PDF score to begin.')
   const detail =
+    connectionNotice ||
     job?.detail ||
     fileProgress ||
     (converting && !job && uploadPct > 0 ? `${uploadPct}% uploaded` : '')

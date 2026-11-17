@@ -38,10 +38,18 @@ function request(port, pathName, { method = 'GET', body, headers = {} } = {}) {
   })
 }
 
-async function startTestServer({ fail = false, maxUploadBytes = 1024 * 1024 } = {}) {
+async function startTestServer({
+  fail = false,
+  maxUploadBytes = 1024 * 1024,
+  maxPending = 4,
+  maxJobs = 50,
+  uploadsPerWindow = 10,
+  uploadWindowMs = 60_000,
+  runner: providedRunner,
+} = {}) {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'solfa-omr-test-'))
   tempDirs.push(tempRoot)
-  const runner = {
+  const runner = providedRunner || {
     async runAudiveris({ onStep }) {
       onStep({ step: 'PAGE', stepIndex: 19, totalSteps: 20, sheet: 1 })
       return { logs: '' }
@@ -63,6 +71,10 @@ async function startTestServer({ fail = false, maxUploadBytes = 1024 * 1024 } = 
       jobTimeoutMs: 2000,
       jobTtlMs: 60_000,
       maxConcurrent: 1,
+      maxPending,
+      maxJobs,
+      uploadsPerWindow,
+      uploadWindowMs,
       tempRoot,
       audiverisBin: 'fake-audiveris',
       audiverisVersion: 'test',
@@ -171,5 +183,59 @@ describe('OMR HTTP service', () => {
     })
     expect(denied.status).toBe(403)
     expect(JSON.parse(denied.text).error.code).toBe('ORIGIN_NOT_ALLOWED')
+  })
+
+  it('rate-limits uploads per client', async () => {
+    const port = await startTestServer({ uploadsPerWindow: 1 })
+    const pdf = Buffer.from('%PDF-1.4\n')
+    const upload = () =>
+      request(port, '/api/omr/jobs', {
+        method: 'POST',
+        body: pdf,
+        headers: { 'Content-Type': 'application/pdf', 'Content-Length': pdf.length },
+      })
+
+    expect((await upload()).status).toBe(202)
+    const limited = await upload()
+    expect(limited.status).toBe(429)
+    expect(limited.headers['retry-after']).toBeDefined()
+    expect(JSON.parse(limited.text).error.code).toBe('RATE_LIMITED')
+  })
+
+  it('rejects uploads when the pending queue is full', async () => {
+    let release
+    const gate = new Promise((resolve) => {
+      release = resolve
+    })
+    const runner = {
+      async runAudiveris() {
+        await gate
+        return { logs: '' }
+      },
+      async readMusicXmlResult() {
+        return { xml: VALID_XML, sourceName: 'score.musicxml' }
+      },
+    }
+    const port = await startTestServer({ runner, maxPending: 1 })
+    const pdf = Buffer.from('%PDF-1.4\n')
+    const upload = () =>
+      request(port, '/api/omr/jobs', {
+        method: 'POST',
+        body: pdf,
+        headers: { 'Content-Type': 'application/pdf', 'Content-Length': pdf.length },
+      })
+
+    const first = await upload()
+    const second = await upload()
+    const third = await upload()
+    expect(first.status).toBe(202)
+    expect(second.status).toBe(202)
+    expect(third.status).toBe(429)
+    expect(third.headers['retry-after']).toBe('60')
+    expect(JSON.parse(third.text).error.code).toBe('QUEUE_FULL')
+
+    release()
+    await waitForJob(port, JSON.parse(first.text).id)
+    await waitForJob(port, JSON.parse(second.text).id)
   })
 })

@@ -13,6 +13,7 @@ import { loadConfig } from './config.js'
 import { OmrError, errorDetails } from './errors.js'
 import { JobQueue } from './jobs.js'
 import { validateMusicXml } from './musicXml.js'
+import { FixedWindowRateLimiter, requestClientKey } from './rateLimit.js'
 
 const PDF_MAGIC = '%PDF-'
 const PDF_TYPES = new Set(['application/pdf', 'application/x-pdf', 'application/octet-stream'])
@@ -46,12 +47,14 @@ function sendJson(res, status, payload) {
 
 function sendError(res, error) {
   const details = errorDetails(error)
+  if (details.retryAfter) res.setHeader('Retry-After', String(details.retryAfter))
   sendJson(res, details.status || 500, {
     error: {
       code: details.code,
       message: details.message,
       detail: details.detail,
       retryable: details.retryable,
+      retryAfter: details.retryAfter || undefined,
       validation: details.validation || undefined,
     },
   })
@@ -248,18 +251,27 @@ export function createOmrServer({
   config = loadConfig(),
   queue,
   runner = { runAudiveris, readMusicXmlResult },
+  rateLimiter,
   logger = console,
 } = {}) {
   const jobs =
     queue ||
     new JobQueue({
       maxConcurrent: config.maxConcurrent,
+      maxPending: config.maxPending,
+      maxJobs: config.maxJobs,
       ttlMs: config.jobTtlMs,
       logger,
     })
+  const limiter =
+    rateLimiter ||
+    new FixedWindowRateLimiter({
+      limit: config.uploadsPerWindow,
+      windowMs: config.uploadWindowMs,
+    })
 
   const server = http.createServer((req, res) => {
-    handleRequest(req, res, { config, jobs, runner, logger }).catch((error) => {
+    handleRequest(req, res, { config, jobs, runner, limiter, logger }).catch((error) => {
       if (res.headersSent) {
         res.destroy()
         return
@@ -275,7 +287,7 @@ export function createOmrServer({
   return server
 }
 
-async function handleRequest(req, res, { config, jobs, runner, logger }) {
+async function handleRequest(req, res, { config, jobs, runner, limiter, logger }) {
   const origin = req.headers.origin
   const cors = corsHeaders(origin, config.allowedOrigins)
   for (const [name, value] of Object.entries(cors)) res.setHeader(name, value)
@@ -314,12 +326,44 @@ async function handleRequest(req, res, { config, jobs, runner, logger }) {
       limits: {
         maxUploadBytes: config.maxUploadBytes,
         jobTimeoutMs: config.jobTimeoutMs,
+        uploadsPerWindow: config.uploadsPerWindow,
+        uploadWindowMs: config.uploadWindowMs,
       },
+      queue: jobs.stats(),
     })
     return
   }
 
   if (req.method === 'POST' && url.pathname === '/api/omr/jobs') {
+    const gate = limiter.take(requestClientKey(req))
+    if (!gate.allowed) {
+      req.resume()
+      sendError(
+        res,
+        new OmrError(
+          'RATE_LIMITED',
+          'Too many PDF uploads from this address. Try again later.',
+          {
+            status: 429,
+            retryable: true,
+            retryAfter: Math.max(1, Math.ceil(gate.retryAfterMs / 1000)),
+          }
+        )
+      )
+      return
+    }
+    if (!jobs.canAccept()) {
+      req.resume()
+      sendError(
+        res,
+        new OmrError('QUEUE_FULL', 'The OMR queue is full. Try again shortly.', {
+          status: 429,
+          retryable: true,
+          retryAfter: 60,
+        })
+      )
+      return
+    }
     await createJob(req, res, { config, jobs, runner, logger })
     return
   }
@@ -424,13 +468,29 @@ async function createJob(req, res, { config, jobs, runner, logger }) {
     fileSize = uploaded.bytes
     await assertPdf(inputPath)
 
+    if (!jobs.canAccept()) {
+      throw new OmrError('QUEUE_FULL', 'The OMR queue is full. Try again shortly.', {
+        status: 429,
+        retryable: true,
+        retryAfter: 60,
+      })
+    }
+
     const job = jobs.create({ fileName, fileSize, tempDir, inputPath })
-    jobs.enqueue(job.id, (update) =>
+    const accepted = jobs.enqueue(job.id, (update) =>
       executeJob(job, update, { config, runner }).catch(async (error) => {
         await removeDir(tempDir)
         throw error
       })
     )
+    if (!accepted) {
+      jobs.remove(job.id)
+      throw new OmrError('QUEUE_FULL', 'The OMR queue is full. Try again shortly.', {
+        status: 429,
+        retryable: true,
+        retryAfter: 60,
+      })
+    }
 
     logger.info?.(`OMR job ${job.id} queued for ${fileName} (${fileSize} bytes)`)
     sendJson(res, 202, jobs.publicJob(job.id))

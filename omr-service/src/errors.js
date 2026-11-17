@@ -1,12 +1,18 @@
 export class OmrError extends Error {
-  constructor(code, message, { status = 500, detail = '', retryable = false, validation = null } = {}) {
+  constructor(
+    code,
+    message,
+    { status = 500, detail = '', retryable = false, validation = null, retryAfter = null } = {}
+  ) {
     super(message)
     this.name = 'OmrError'
     this.code = code
+    this.message = message
     this.status = status
     this.detail = detail
     this.retryable = retryable
     this.validation = validation
+    this.retryAfter = retryAfter
   }
 }
 
@@ -19,6 +25,7 @@ export function errorDetails(error, fallbackCode = 'OMR_FAILED') {
       retryable: error.retryable,
       status: error.status,
       validation: error.validation,
+      retryAfter: error.retryAfter,
     }
   }
   return {
@@ -28,5 +35,6 @@ export function errorDetails(error, fallbackCode = 'OMR_FAILED') {
     retryable: true,
     status: 500,
     validation: null,
+    retryAfter: null,
   }
 }
