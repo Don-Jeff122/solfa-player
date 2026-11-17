@@ -1,4 +1,5 @@
 import { child, childText, children, descendants, hasChild, parseXml } from './xml.js'
+import { inferVoices } from './voiceInference.js'
 
 const MUSIC_XML_RE = /\.(musicxml|xml)$/i
 const MXL_RE = /\.mxl$/i
@@ -281,6 +282,15 @@ export function parseMusicXml(text) {
   let timeChanged = false
   const parts = []
   const partNodes = children(root, 'part')
+  const voiceInference = inferVoices(partNodes, { listedNames: names })
+  const inferredVoiceNames = new Map()
+  for (const mapping of Object.values(voiceInference.satb.mapping)) {
+    const match = voiceInference.activeVoices.find(
+      (voice) => voice.voice === mapping.voice && voice.staff === mapping.staff
+    )
+    if (match) inferredVoiceNames.set(match.key, mapping.name)
+  }
+  warnings.push(...voiceInference.warnings)
 
   partNodes.forEach((partNode, partIndex) => {
     const id = partNode.attrs?.id
@@ -288,6 +298,7 @@ export function parseMusicXml(text) {
     const measureNodes = children(partNode, 'measure')
     const measureMeta = []
     const voices = new Map()
+    const voiceMeta = new Map()
     let divisions = 1
     let time = null
     let clef = null
@@ -330,8 +341,13 @@ export function parseMusicXml(text) {
       for (const noteNode of children(measureNode, 'note')) {
         if (hasChild(noteNode, 'grace')) continue
         const voice = childText(noteNode, 'voice') || '1'
-        if (!measureNotes.has(voice)) measureNotes.set(voice, [])
-        const list = measureNotes.get(voice)
+        const staff = childText(noteNode, 'staff') || '1'
+        const voiceKey = `${partIndex}|${staff}|${voice}`
+        if (!voiceMeta.has(voiceKey)) {
+          voiceMeta.set(voiceKey, { key: voiceKey, partName, voice, staff })
+        }
+        if (!measureNotes.has(voiceKey)) measureNotes.set(voiceKey, [])
+        const list = measureNotes.get(voiceKey)
         const duration = noteDuration(noteNode, divisions)
         if (!duration || duration <= 0) {
           warnings.push(
@@ -379,16 +395,25 @@ export function parseMusicXml(text) {
         beats: time ? (time.beats * 4) / time.beatType : null,
       })
 
-      for (const [voice, list] of measureNotes) {
-        if (!voices.has(voice)) voices.set(voice, measureNodes.map(() => []))
-        const measures = voices.get(voice)
+      for (const [voiceKey, list] of measureNotes) {
+        if (!voices.has(voiceKey)) voices.set(voiceKey, measureNodes.map(() => []))
+        const measures = voices.get(voiceKey)
         if (!measures[measureIndex]) measures[measureIndex] = []
         measures[measureIndex].push(...list)
       }
     })
 
+    for (const artifact of voiceInference.artifactVoices) {
+      if (artifact.partIndex !== partIndex || !artifact.targetKey) continue
+      const source = voices.get(artifact.key)
+      const target = voices.get(artifact.targetKey)
+      if (!source || !target) continue
+      source.forEach((notes, index) => target[index].push(...notes))
+      voices.delete(artifact.key)
+    }
+
     const genericPart = isGenericName(partName)
-    for (const [voice, measureNotes] of voices) {
+    for (const [voiceKey, measureNotes] of voices) {
       const measures = measureMeta.map((meta, index) => ({
         number: meta.number,
         beats: meta.beats,
@@ -396,10 +421,12 @@ export function parseMusicXml(text) {
       }))
       const notes = measures.flatMap((measure) => measure.notes)
       if (!notes.length) continue
+      const meta = voiceMeta.get(voiceKey) || { voice: '1', staff: '1' }
       parts.push({
-        name: voiceName(partName, voice, voices.size, genericPart),
+        name: inferredVoiceNames.get(voiceKey) || voiceName(partName, meta.voice, voices.size, genericPart),
         clef,
-        voice,
+        voice: meta.voice,
+        staff: meta.staff,
         measures,
         notes,
         confidence: 1,

@@ -99,6 +99,7 @@ function keyLabel(key) {
 function satbLabel(summary) {
   if (!summary) return 'Not available'
   if (summary.satbConfirmed) return 'SATB confirmed'
+  if (summary.satbInferred) return 'SATB inferred'
   if (summary.parts === 4) return '4 parts · unconfirmed'
   return 'Not a 4-part score'
 }
@@ -467,7 +468,7 @@ export default function OmrConverter({ onClose }) {
                 <>
                   <div className="omr-grid">
                     <div>
-                      <span>Parts</span>
+                      <span>Voices</span>
                       <b>{summary.parts}</b>
                     </div>
                     <div>
@@ -496,7 +497,11 @@ export default function OmrConverter({ onClose }) {
                     </div>
                   </div>
                   {summary.partNames?.length > 0 && (
-                    <p className="omr-parts">Parts: {summary.partNames.join(' · ')}</p>
+                    <p className="omr-parts">
+                      {summary.satbInferred
+                        ? `Voices: ${summary.partNames.join(' · ')} (inferred from ${summary.xmlParts ?? 1} MusicXML part${summary.xmlParts === 1 ? '' : 's'})`
+                        : `Parts: ${summary.partNames.join(' · ')}`}
+                    </p>
                   )}
                 </>
               )}

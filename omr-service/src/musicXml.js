@@ -1,4 +1,5 @@
 import { child, children, childText, parseXml } from '../../src/lib/music/xml.js'
+import { inferVoices } from '../../src/lib/music/voiceInference.js'
 
 const PITCH_STEPS = new Set(['A', 'B', 'C', 'D', 'E', 'F', 'G'])
 const SATB_ROLES = ['soprano', 'alto', 'tenor', 'bass']
@@ -135,6 +136,9 @@ export function validateMusicXml(xml, { fileName = 'score.musicxml' } = {}) {
   const parts = children(root, 'part')
   if (!parts.length) errors.push('The MusicXML has no musical parts.')
 
+  const voiceInference = inferVoices(parts, { listedNames })
+  warnings.push(...voiceInference.warnings)
+
   let totalPitchedNotes = 0
   let totalRests = 0
   let invalidNotes = 0
@@ -192,8 +196,12 @@ export function validateMusicXml(xml, { fileName = 'score.musicxml' } = {}) {
   const title = scoreTitle(root)
   if (!title) warnings.push('No score title was found in the MusicXML.')
 
-  const satb = satbReport(partNames)
-  if (satb.warning) warnings.push(satb.warning)
+  const satb =
+    voiceInference.satb.satbConfirmed || voiceInference.satb.satbInferred
+      ? voiceInference.satb
+      : satbReport(partNames)
+  if (satb.warning && !voiceInference.satb.satbInferred) warnings.push(satb.warning)
+  const inferred = voiceInference.satb.satbInferred
 
   return {
     ok: errors.length === 0,
@@ -202,8 +210,9 @@ export function validateMusicXml(xml, { fileName = 'score.musicxml' } = {}) {
     fileName: parsedFile,
     title,
     summary: {
-      parts: parts.length,
-      partNames,
+      parts: inferred ? voiceInference.activeVoices.length : parts.length,
+      xmlParts: parts.length,
+      partNames: inferred ? SATB_LABELS : partNames,
       measures: maxMeasures,
       notes: totalPitchedNotes,
       rests: totalRests,
@@ -211,6 +220,7 @@ export function validateMusicXml(xml, { fileName = 'score.musicxml' } = {}) {
       time,
       satb: satb.satb,
       satbConfirmed: satb.satbConfirmed,
+      satbInferred: inferred,
       satbMapping: satb.mapping,
     },
   }

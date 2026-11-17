@@ -209,6 +209,29 @@ describe('MusicXML parsing', () => {
     expect(score.warnings.join(' ')).toMatch(/time/i)
   })
 
+  it('splits a two-staff piano part into inferred SATB voices', () => {
+    const voiceNote = (step, octave, voice, staff) =>
+      `<note><pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type><voice>${voice}</voice><staff>${staff}</staff></note>`
+    const repeated = (value, count) => Array.from({ length: count }, () => value).join('')
+    const notes = [
+      repeated(voiceNote('C', 5, 1, 1), 20),
+      repeated(voiceNote('G', 4, 2, 1), 20),
+      voiceNote('A', 4, 3, 1),
+      repeated(voiceNote('C', 4, 5, 2), 20),
+      repeated(voiceNote('G', 3, 6, 2), 20),
+      voiceNote('A', 3, 7, 2),
+    ].join('')
+    const attributes =
+      '<attributes><divisions>1</divisions><staves>2</staves><key><fifths>-1</fifths><mode>major</mode></key><time><beats>3</beats><beat-type>4</beat-type></time></attributes>'
+    const xml = `<?xml version="1.0"?><score-partwise><work><work-title>Makoma</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1">${attributes}${notes}</measure></part></score-partwise>`
+    const score = parseMusicXml(xml)
+
+    expect(score.parts.map((part) => part.name)).toEqual(['Soprano', 'Alto', 'Tenor', 'Bass'])
+    expect(score.parts.map((part) => part.voice)).toEqual(['1', '2', '5', '6'])
+    expect(score.warnings.join(' ')).toMatch(/inferred from two staves/)
+    expect(score.warnings.join(' ')).toMatch(/merged/)
+  })
+
   it('rejects timewise scores and non-MusicXML files', () => {
     expect(() => parseMusicXml('<score-timewise/>')).toThrow(/Timewise/i)
     expect(() => parseMusicXml('<html/>')).toThrow(/not a MusicXML score/i)

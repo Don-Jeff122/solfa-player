@@ -96,4 +96,32 @@ describe('validateMusicXml', () => {
     expect(result.warnings.join(' ')).toContain('No time signature')
     expect(result.warnings.join(' ')).toContain('No score title')
   })
+
+  it('infers SATB voices from a two-staff piano part', () => {
+    const voiceNote = (step, octave, voice, staff) =>
+      `<note><pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>1</duration><type>quarter</type><voice>${voice}</voice><staff>${staff}</staff></note>`
+    const repeated = (value, count) => Array.from({ length: count }, () => value).join('')
+    const notes = [
+      repeated(voiceNote('C', 5, 1, 1), 20),
+      repeated(voiceNote('G', 4, 2, 1), 20),
+      voiceNote('A', 4, 3, 1),
+      repeated(voiceNote('C', 4, 5, 2), 20),
+      repeated(voiceNote('G', 3, 6, 2), 20),
+      voiceNote('A', 3, 7, 2),
+    ].join('')
+    const attributes =
+      '<attributes><staves>2</staves><key><fifths>-1</fifths><mode>major</mode></key><time><beats>3</beats><beat-type>4</beat-type></time></attributes>'
+    const xml = `<score-partwise><work><work-title>Makoma</work-title></work><part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list><part id="P1"><measure number="1">${attributes}${notes}</measure></part></score-partwise>`
+    const result = validateMusicXml(xml)
+
+    expect(result.ok).toBe(true)
+    expect(result.summary.parts).toBe(4)
+    expect(result.summary.xmlParts).toBe(1)
+    expect(result.summary.partNames).toEqual(['Soprano', 'Alto', 'Tenor', 'Bass'])
+    expect(result.summary.satb).toBe(true)
+    expect(result.summary.satbConfirmed).toBe(false)
+    expect(result.summary.satbInferred).toBe(true)
+    expect(result.warnings.join(' ')).toMatch(/inferred from two staves/)
+    expect(result.warnings.join(' ')).toMatch(/merged/)
+  })
 })
