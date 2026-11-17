@@ -64,8 +64,8 @@ function keyLabel(key) {
 function satbLabel(summary) {
   if (!summary) return 'Not available'
   if (summary.satbConfirmed) return 'SATB confirmed'
-  if (summary.parts === 4) return '4 parts · SATB unconfirmed'
-  return `${summary.parts} part${summary.parts === 1 ? '' : 's'}`
+  if (summary.parts === 4) return '4 parts · unconfirmed'
+  return 'Not a 4-part score'
 }
 
 function stageState(stageId, { job, converting }) {
@@ -426,7 +426,7 @@ export default function OmrConverter({ onClose }) {
                       <b>{summary.rests}</b>
                     </div>
                     <div>
-                      <span>Voices</span>
+                      <span>SATB</span>
                       <b>{satbLabel(summary)}</b>
                     </div>
                     <div>

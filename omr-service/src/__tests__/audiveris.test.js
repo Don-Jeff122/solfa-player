@@ -24,12 +24,16 @@ describe('Audiveris adapter', () => {
     ])
   })
 
-  it('parses sheet progress lines without matching a literal backslash-s', () => {
-    const parsed = parseAudiverisLine('INFO PAGE sheet 2 done')
+  it('parses StepMonitoring progress lines without matching summary logs', () => {
+    const parsed = parseAudiverisLine(
+      '2026-11-17 01:49:21,803 INFO [Score-sheet#2] StepMonitoring.java:98 | PAGE'
+    )
     expect(parsed.step).toBe('PAGE')
     expect(parsed.stepIndex).toBe(AUDIVERIS_STEPS.indexOf('PAGE'))
     expect(parsed.totalSteps).toBe(AUDIVERIS_STEPS.length)
     expect(parsed.sheet).toBe(2)
+    expect(parseAudiverisLine('Book reaching PAGE on sheets:[#1]')).toBeNull()
+    expect(parseAudiverisLine('INFO | Stored /sheet#1/BINARY.png')).toBeNull()
     expect(parseAudiverisLine('Nothing useful here')).toBeNull()
   })
 

@@ -96,16 +96,20 @@ export function isAudiverisAvailable(
   return false
 }
 
+const STEP_SET = new Set(AUDIVERIS_STEPS)
+
 export function parseAudiverisLine(line) {
-  const stepMatch = String(line).match(new RegExp(`\\b(${AUDIVERIS_STEPS.join('|')})\\b`))
-  if (!stepMatch) return null
-  const sheetMatch = String(line).match(/sheet\s*#?\s*(\d+)/i)
+  const text = String(line)
+  const stepMatch = text.match(/\|\s*([A-Z_]+)\s*$/)
+  const step = stepMatch?.[1]
+  if (!STEP_SET.has(step)) return null
+  const sheetMatch = text.match(/sheet\s*#?\s*(\d+)/i)
   return {
-    step: stepMatch[1],
-    stepIndex: AUDIVERIS_STEPS.indexOf(stepMatch[1]),
+    step,
+    stepIndex: AUDIVERIS_STEPS.indexOf(step),
     totalSteps: AUDIVERIS_STEPS.length,
     sheet: sheetMatch ? Number(sheetMatch[1]) : null,
-    line: String(line).trim(),
+    line: text.trim(),
   }
 }
 

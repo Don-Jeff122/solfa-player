@@ -145,3 +145,6 @@ npm test
 ```
 
 They use a fake Audiveris runner; they do not require Java or a real PDF.
+The service has also been smoke-tested against Audiveris 5.11.0 on Windows with
+single- and multi-page PDFs, including the full frontend upload, progress, and
+MusicXML download flow.
