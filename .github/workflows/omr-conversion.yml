@@ -24,8 +24,6 @@ concurrency:
   group: omr-${{ inputs.job_id }}
   cancel-in-progress: false
 
-timeout-minutes: 20
-
 env:
   LOCAL_API: http://127.0.0.1:8788
   OMR_DIR: /tmp/omr
@@ -34,6 +32,7 @@ env:
 jobs:
   convert:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
