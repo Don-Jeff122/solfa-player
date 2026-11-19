@@ -5,3 +5,4 @@
 !src/lib
 !src/lib/music
 !src/lib/music/xml.js
+!src/lib/music/voiceInference.js

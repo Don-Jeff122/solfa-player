@@ -40,16 +40,22 @@ VITE_OMR_API_URL=http://127.0.0.1:8788
 ```
 
 For production, set the GitHub Actions repository variable `OMR_API_URL` to the
-public HTTPS URL of this service. If it is unset, the frontend hides the
+Cloudflare OMR Worker URL, which dispatches the cloud workflow that runs this
+service in a container. If it is unset, the frontend hides the
 **PDF to MusicXML** button.
 
 ## Docker
 
-Build from the repository root so the shared XML parser is included:
+Build from the repository root, not from `omr-service/`. The service imports the
+shared helpers `src/lib/music/xml.js` and `src/lib/music/voiceInference.js`;
+`.dockerignore` allowlists those files together with `omr-service/`, so building
+from another directory breaks the import paths in the container. The cloud
+workflow (`.github/workflows/omr-conversion.yml`) builds from the same root
+context and tags the image `solfa-omr-cloud`:
 
 ```sh
-docker build -f omr-service/Dockerfile -t solfa-omr .
-docker run --rm -p 8788:8788 --memory=4g solfa-omr
+docker build -f omr-service/Dockerfile -t solfa-omr-cloud .
+docker run --rm -p 127.0.0.1:8788:8788 --memory=4g solfa-omr-cloud
 ```
 
 The image installs Audiveris 5.11.0 for Ubuntu 24.04 and wraps it in `xvfb-run`,

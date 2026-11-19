@@ -1,0 +1,339 @@
+name: OMR conversion
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: Job id assigned by the OMR Worker
+        required: true
+        type: string
+      worker_url:
+        description: Base URL of the Cloudflare OMR Worker
+        required: true
+        type: string
+      file_name:
+        description: Sanitized source PDF filename
+        required: false
+        type: string
+        default: score.pdf
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omr-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+timeout-minutes: 20
+
+env:
+  LOCAL_API: http://127.0.0.1:8788
+  OMR_DIR: /tmp/omr
+  OMR_INTERNAL_SECRET: ${{ secrets.OMR_INTERNAL_SECRET }}
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          JOB_ID_INPUT: ${{ inputs.job_id }}
+          WORKER_URL_INPUT: ${{ inputs.worker_url }}
+          FILE_NAME_INPUT: ${{ inputs.file_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$JOB_ID_INPUT" =~ ^[A-Za-z0-9_-]{1,128}$ ]]; then
+            echo "::error::job_id must contain only letters, digits, '-' or '_' (max 128 characters)."
+            exit 1
+          fi
+          if [[ ! "$WORKER_URL_INPUT" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "::error::worker_url must be a non-empty https URL without whitespace."
+            exit 1
+          fi
+          if [[ -z "${OMR_INTERNAL_SECRET:-}" ]]; then
+            echo "::error::The OMR_INTERNAL_SECRET repository secret is required."
+            exit 1
+          fi
+          mkdir -p "$OMR_DIR"
+          export JOB_ID="$JOB_ID_INPUT"
+          export WORKER_URL="${WORKER_URL_INPUT%/}"
+          export FILE_NAME="$(printf '%s' "${FILE_NAME_INPUT:-score.pdf}" | tr -d '\r\n' | cut -c1-140)"
+          printf 'JOB_ID=%s\nWORKER_URL=%s\nFILE_NAME=%s\n' "$JOB_ID" "$WORKER_URL" "$FILE_NAME" >> "$GITHUB_ENV"
+
+      - name: Download job PDF from Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          input_url="${WORKER_URL}/internal/jobs/${JOB_ID}/input"
+          for attempt in 1 2 3 4 5; do
+            rm -f "${OMR_DIR}/input.pdf.part"
+            status="$(
+              curl --silent --show-error \
+                --output "${OMR_DIR}/input.pdf.part" \
+                --write-out '%{http_code}' \
+                --header "Authorization: Bearer ${OMR_INTERNAL_SECRET}" \
+                "$input_url" || true
+            )"
+            if [[ "$status" == 200 ]]; then
+              if [[ ! -s "${OMR_DIR}/input.pdf.part" ]] || [[ "$(head -c 5 "${OMR_DIR}/input.pdf.part")" != '%PDF-' ]]; then
+                echo "::error::The Worker returned an empty or invalid PDF."
+                exit 1
+              fi
+              mv "${OMR_DIR}/input.pdf.part" "${OMR_DIR}/input.pdf"
+              echo "Downloaded PDF for job ${JOB_ID}."
+              exit 0
+            fi
+            case "$status" in
+              408|425|429|500|502|503|504|000)
+                echo "::notice::Input download attempt ${attempt}/5 returned HTTP ${status:-none}; retrying."
+                sleep $((attempt * 3))
+                ;;
+              *)
+                echo "::error::Could not download the PDF (HTTP ${status:-none})."
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::Could not download the PDF after 5 attempts."
+          exit 1
+
+      - name: Build OMR image
+        shell: bash
+        run: docker build -f omr-service/Dockerfile -t solfa-omr-cloud .
+
+      - name: Start local OMR service
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm -f solfa-omr-cloud >/dev/null 2>&1 || true
+          docker run --detach --name solfa-omr-cloud \
+            --publish 127.0.0.1:8788:8788 \
+            --env OMR_ALLOWED_ORIGINS='*' \
+            --env OMR_MAX_UPLOAD_BYTES=26214400 \
+            --env OMR_MAX_JOB_TIMEOUT_MS=900000 \
+            --env OMR_JOB_TIMEOUT_MS=900000 \
+            solfa-omr-cloud
+          for attempt in $(seq 1 30); do
+            if curl --silent --show-error --fail --output /dev/null "${LOCAL_API}/api/health"; then
+              echo "Local OMR service is responding."
+              exit 0
+            fi
+            if [[ "$attempt" -eq 30 ]]; then
+              echo "::error::Local OMR service did not become healthy."
+              docker logs --tail 100 solfa-omr-cloud || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Submit PDF to local OMR service
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(
+            curl --silent --show-error --fail \
+              --request POST \
+              --header 'Content-Type: application/pdf' \
+              --header "X-File-Name: ${FILE_NAME}" \
+              --data-binary "@${OMR_DIR}/input.pdf" \
+              "${LOCAL_API}/api/omr/jobs"
+          )"
+          local_job_id="$(printf '%s' "$response" | jq -r '.id // empty')"
+          if [[ ! "$local_job_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "::error::The local OMR service did not return a valid job id."
+            exit 1
+          fi
+          printf 'LOCAL_JOB_ID=%s\n' "$local_job_id" >> "$GITHUB_ENV"
+          jq -nc \
+            --argjson seq 2 \
+            --arg stage 'accepted' \
+            --argjson progress 0 \
+            --arg message 'Conversion accepted' \
+            --arg detail '' \
+            --argjson summary null \
+            --argjson warnings '[]' \
+            '{seq:$seq,stage:$stage,progress:$progress,message:$message,detail:$detail,summary:$summary,warnings:$warnings}' \
+            > "${OMR_DIR}/progress.json"
+          status="$(
+            curl --silent --show-error \
+              --output "${OMR_DIR}/worker-response.txt" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer ${OMR_INTERNAL_SECRET}" \
+              --header 'Content-Type: application/json' \
+              --data-binary "@${OMR_DIR}/progress.json" \
+              "${WORKER_URL}/internal/jobs/${JOB_ID}/progress" || true
+          )"
+          case "$status" in
+            2??|404) ;;
+            *) echo "::warning::Worker progress endpoint returned HTTP ${status:-none} for the accepted notice." ;;
+          esac
+          printf '2\n' > "${OMR_DIR}/last_seq"
+
+      - name: Poll local job and report progress
+        shell: bash
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 840 ))
+          last_seq="$(cat "${OMR_DIR}/last_seq" 2>/dev/null || printf '2')"
+          while true; do
+            if ! curl --silent --show-error --fail \
+              --output "${OMR_DIR}/job.json" \
+              "${LOCAL_API}/api/omr/jobs/${LOCAL_JOB_ID}"; then
+              jq -nc \
+                --arg code 'OMR_STATUS_FAILED' \
+                --arg message 'Could not read the local OMR job status.' \
+                --arg detail "local job ${LOCAL_JOB_ID}" \
+                '{code:$code,message:$message,detail:$detail}' > "${OMR_DIR}/failure.json"
+              echo "::error::Could not read the local OMR job status."
+              exit 1
+            fi
+            status="$(jq -r '.status // empty' "${OMR_DIR}/job.json")"
+            progress="$(jq -r '((.progress // 0) | floor | if . < 0 then 0 elif . > 100 then 100 else . end)' "${OMR_DIR}/job.json")"
+            seq=$((10 + progress / 5))
+            if (( seq > last_seq )); then
+              jq -nc \
+                --argjson seq "$seq" \
+                --arg stage "$(jq -r '.stage // empty' "${OMR_DIR}/job.json")" \
+                --argjson progress "$progress" \
+                --arg message "$(jq -r '.message // empty' "${OMR_DIR}/job.json")" \
+                --arg detail "$(jq -r '.detail // empty' "${OMR_DIR}/job.json")" \
+                --argjson summary "$(jq -c '.summary // null' "${OMR_DIR}/job.json")" \
+                --argjson warnings "$(jq -c '.warnings // []' "${OMR_DIR}/job.json")" \
+                '{seq:$seq,stage:$stage,progress:$progress,message:$message,detail:$detail,summary:$summary,warnings:$warnings}' \
+                > "${OMR_DIR}/progress.json"
+              status_code="$(
+                curl --silent --show-error \
+                  --output "${OMR_DIR}/worker-response.txt" \
+                  --write-out '%{http_code}' \
+                  --request POST \
+                  --header "Authorization: Bearer ${OMR_INTERNAL_SECRET}" \
+                  --header 'Content-Type: application/json' \
+                  --data-binary "@${OMR_DIR}/progress.json" \
+                  "${WORKER_URL}/internal/jobs/${JOB_ID}/progress" || true
+              )"
+              case "$status_code" in
+                2??|404) ;;
+                *) echo "::warning::Worker progress endpoint returned HTTP ${status_code:-none} for seq ${seq}." ;;
+              esac
+              last_seq="$seq"
+              printf '%s\n' "$last_seq" > "${OMR_DIR}/last_seq"
+            fi
+            case "$status" in
+              complete)
+                exit 0
+                ;;
+              failed)
+                jq -nc \
+                  --arg code "$(jq -r '.error.code // "OMR_FAILED"' "${OMR_DIR}/job.json")" \
+                  --arg message "$(jq -r '.error.message // "The PDF could not be converted."' "${OMR_DIR}/job.json")" \
+                  --arg detail "$(jq -r '.error.detail // empty' "${OMR_DIR}/job.json")" \
+                  '{code:$code,message:$message,detail:$detail}' > "${OMR_DIR}/failure.json"
+                echo "::error::OMR conversion failed: $(jq -r '.error.message // "unknown error"' "${OMR_DIR}/job.json")"
+                exit 1
+                ;;
+            esac
+            if (( $(date +%s) >= deadline )); then
+              jq -nc \
+                --arg code 'OMR_TIMEOUT' \
+                --arg message 'OMR conversion timed out.' \
+                --arg detail "local job ${LOCAL_JOB_ID} exceeded the poll deadline" \
+                '{code:$code,message:$message,detail:$detail}' > "${OMR_DIR}/failure.json"
+              echo "::error::OMR conversion timed out."
+              exit 1
+            fi
+            sleep 3
+          done
+
+      - name: Deliver MusicXML to Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --fail \
+            --output "${OMR_DIR}/result.musicxml" \
+            "${LOCAL_API}/api/omr/jobs/${LOCAL_JOB_ID}/musicxml"
+          if [[ ! -s "${OMR_DIR}/result.musicxml" ]]; then
+            echo "::error::The local OMR service returned an empty MusicXML result."
+            exit 1
+          fi
+          encode_header() {
+            local json="$1"
+            local limit="$2"
+            if (( ${#json} > limit )); then
+              return 0
+            fi
+            printf '%s' "$json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(Buffer.from(s,"utf8").toString("base64url")))'
+          }
+          summary_json="$(jq -c '.summary // null' "${OMR_DIR}/job.json")"
+          warnings_json="$(jq -c '.warnings // []' "${OMR_DIR}/job.json")"
+          args=(
+            --silent --show-error
+            --output "${OMR_DIR}/worker-response.txt"
+            --write-out '%{http_code}'
+            --request POST
+            --header "Authorization: Bearer ${OMR_INTERNAL_SECRET}"
+            --header 'Content-Type: application/vnd.recordare.musicxml+xml'
+            --data-binary "@${OMR_DIR}/result.musicxml"
+          )
+          summary_header="$(encode_header "$summary_json" 1024)"
+          warnings_header="$(encode_header "$warnings_json" 4096)"
+          if [[ -n "$summary_header" ]]; then
+            args+=( --header "X-OMR-Summary: ${summary_header}" )
+          fi
+          if [[ -n "$warnings_header" ]]; then
+            args+=( --header "X-OMR-Warnings: ${warnings_header}" )
+          fi
+          status="$(curl "${args[@]}" "${WORKER_URL}/internal/jobs/${JOB_ID}/result" || true)"
+          case "$status" in
+            2??|404)
+              touch "${OMR_DIR}/completed"
+              echo "MusicXML delivered for job ${JOB_ID}."
+              ;;
+            *)
+              echo "::error::Worker result endpoint returned HTTP ${status:-none}."
+              exit 1
+              ;;
+          esac
+
+      - name: Report failure to Worker
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "${OMR_DIR}/completed" ]]; then
+            exit 0
+          fi
+          if [[ -z "${JOB_ID:-}" || -z "${WORKER_URL:-}" || -z "${OMR_INTERNAL_SECRET:-}" ]]; then
+            echo "Worker context unavailable; skipping failure notice."
+            exit 0
+          fi
+          if [[ ! -f "${OMR_DIR}/failure.json" ]]; then
+            jq -nc \
+              --arg code 'WORKFLOW_FAILED' \
+              --arg message 'The OMR conversion workflow did not complete.' \
+              --arg detail "run ${GITHUB_RUN_ID:-unknown}/${GITHUB_RUN_ATTEMPT:-1}" \
+              '{code:$code,message:$message,detail:$detail}' > "${OMR_DIR}/failure.json"
+          fi
+          status="$(
+            curl --silent --show-error \
+              --output "${OMR_DIR}/worker-response.txt" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer ${OMR_INTERNAL_SECRET}" \
+              --header 'Content-Type: application/json' \
+              --data-binary "@${OMR_DIR}/failure.json" \
+              "${WORKER_URL}/internal/jobs/${JOB_ID}/failure" || true
+          )"
+          case "$status" in
+            2??|404) echo "Failure reported to Worker." ;;
+            *) echo "::warning::Worker failure endpoint returned HTTP ${status:-none}." ;;
+          esac
+
+      - name: Remove local OMR container
+        if: always()
+        shell: bash
+        run: docker rm -f solfa-omr-cloud >/dev/null 2>&1 || true

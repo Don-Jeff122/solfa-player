@@ -40,6 +40,7 @@ RUN useradd --create-home --uid 10001 omr \
 WORKDIR /app
 
 COPY src/lib/music/xml.js /app/src/lib/music/xml.js
+COPY src/lib/music/voiceInference.js /app/src/lib/music/voiceInference.js
 COPY omr-service /app/omr-service
 
 RUN chown -R omr:omr /app
