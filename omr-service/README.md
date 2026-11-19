@@ -135,39 +135,6 @@ Reports the configured Audiveris executable and upload/timeout limits.
 - An in-memory job store is intentional for this single-instance service. If you
   run multiple replicas, add shared storage and sticky job routing first.
 
-## Cloudflare Quick Tunnel
-
-For a no-cost demo, run the backend on a Windows PC and expose it with a
-Cloudflare Quick Tunnel. This requires no Cloudflare account or card, but the PC
-must stay awake and the `trycloudflare.com` URL changes after every tunnel
-restart. Re-run the script after a restart so `OMR_API_URL` is updated and Pages
-is rebuilt.
-
-Prerequisites:
-
-- Audiveris installed outside the Windows temp directory.
-- `cloudflared.exe` in `%LOCALAPPDATA%\cloudflared`.
-- An authenticated GitHub CLI with repository variable access.
-
-Start the backend, tunnel, and deployment:
-
-```powershell
-.\scripts\start-omr-tunnel.ps1
-```
-
-Stop the processes started by the script:
-
-```powershell
-.\scripts\start-omr-tunnel.ps1 -Stop
-```
-
-The script keeps one concurrent Audiveris job, four pending jobs, 50 retained
-jobs, and ten uploads per client per hour. The public endpoint is still
-unauthenticated. Do not treat it as production.
-
-A named Cloudflare Tunnel with a domain gives a stable URL without changing
-GitHub Pages after each restart.
-
 ## Audiveris licence
 
 Audiveris is licensed under **AGPL V3**. This repository invokes the installed

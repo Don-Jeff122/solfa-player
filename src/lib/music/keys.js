@@ -77,7 +77,7 @@ export function normalizeKeyName(name) {
   return keyNameForPitchClass(pc)
 }
 
-export function keyNameForPitchClass(pc, { preferFlats = false } = {}) {
+function keyNameForPitchClass(pc, { preferFlats = false } = {}) {
   const value = ((Math.round(pc) % 12) + 12) % 12
   return (preferFlats ? FLAT_NAMES : SHARP_NAMES)[value]
 }

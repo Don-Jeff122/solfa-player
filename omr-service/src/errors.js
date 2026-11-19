@@ -16,7 +16,7 @@ export class OmrError extends Error {
   }
 }
 
-export function errorDetails(error, fallbackCode = 'OMR_FAILED') {
+export function errorDetails(error) {
   if (error instanceof OmrError) {
     return {
       code: error.code,
@@ -29,7 +29,7 @@ export function errorDetails(error, fallbackCode = 'OMR_FAILED') {
     }
   }
   return {
-    code: fallbackCode,
+    code: 'OMR_FAILED',
     message: error?.message || 'The OMR service failed.',
     detail: '',
     retryable: true,

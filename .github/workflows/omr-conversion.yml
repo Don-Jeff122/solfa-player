@@ -113,7 +113,6 @@ jobs:
             --publish 127.0.0.1:8788:8788 \
             --env OMR_ALLOWED_ORIGINS='*' \
             --env OMR_MAX_UPLOAD_BYTES=26214400 \
-            --env OMR_MAX_JOB_TIMEOUT_MS=900000 \
             --env OMR_JOB_TIMEOUT_MS=900000 \
             solfa-omr-cloud
           for attempt in $(seq 1 30); do

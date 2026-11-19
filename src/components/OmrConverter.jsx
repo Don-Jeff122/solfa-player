@@ -69,7 +69,6 @@ async function getJobWithRetry(id, { signal, onRetry }) {
       await wait(POLL_RETRY_MS, signal)
     }
   }
-  return null
 }
 
 async function fetchMusicXmlWithRetry(id, { signal, onRetry }) {
@@ -83,7 +82,6 @@ async function fetchMusicXmlWithRetry(id, { signal, onRetry }) {
       await wait(POLL_RETRY_MS, signal)
     }
   }
-  return ''
 }
 
 function keyLabel(key) {

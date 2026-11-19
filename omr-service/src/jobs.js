@@ -177,8 +177,4 @@ export class JobQueue {
       if (now - job.updatedAt > this.ttlMs) this.jobs.delete(id)
     }
   }
-
-  get size() {
-    return this.jobs.size
-  }
 }

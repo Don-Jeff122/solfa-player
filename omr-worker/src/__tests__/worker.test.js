@@ -10,7 +10,6 @@ const XML =
 class MemoryKV {
   constructor() {
     this.store = new Map()
-    this.expirations = new Map()
   }
 
   toBytes(value) {
@@ -33,11 +32,8 @@ class MemoryKV {
     return value
   }
 
-  async put(key, value, options = {}) {
+  async put(key, value) {
     this.store.set(key, value instanceof ArrayBuffer ? new Uint8Array(value) : value)
-    if (options.expirationTtl) {
-      this.expirations.set(key, Date.now() + options.expirationTtl * 1000)
-    }
   }
 
   async list({ prefix = '', cursor, limit } = {}) {
@@ -54,7 +50,6 @@ class MemoryKV {
 
   async delete(key) {
     this.store.delete(key)
-    this.expirations.delete(key)
   }
 }
 
@@ -367,7 +362,6 @@ describe('OMR worker public endpoints', () => {
       stage: 'complete',
       progress: 100,
       message: 'MusicXML ready',
-      resultBytes: XML.length,
     })
     expect(final.summary).toEqual(summary)
     expect(final.warnings).toEqual(warnings)

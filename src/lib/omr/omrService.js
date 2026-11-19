@@ -1,10 +1,10 @@
 const RAW_BASE =
   typeof import.meta !== 'undefined' ? import.meta.env?.VITE_OMR_API_URL || '' : ''
 
-export const OMR_API_BASE = String(RAW_BASE).replace(/\/+$/, '')
+const OMR_API_BASE = String(RAW_BASE).replace(/\/+$/, '')
 export const MAX_OMR_PDF_BYTES = 25 * 1024 * 1024
 
-export class OmrRequestError extends Error {
+class OmrRequestError extends Error {
   constructor(message, { code = 'OMR_REQUEST_FAILED', status = 0, detail = '', retryable = true, validation = null } = {}) {
     super(message)
     this.name = 'OmrRequestError'
@@ -20,14 +20,14 @@ export function isOmrConfigured() {
   return Boolean(OMR_API_BASE)
 }
 
-function endpoint(path, baseUrl = OMR_API_BASE) {
-  if (!baseUrl) {
+function endpoint(path) {
+  if (!OMR_API_BASE) {
     throw new OmrRequestError('The PDF to MusicXML service is not configured.', {
       code: 'OMR_NOT_CONFIGURED',
       retryable: false,
     })
   }
-  return `${String(baseUrl).replace(/\/+$/, '')}${path}`
+  return `${OMR_API_BASE}${path}`
 }
 
 function responseError(payload, status) {
@@ -50,12 +50,7 @@ function parseJson(text) {
   }
 }
 
-export function uploadOmrJob({
-  file,
-  onProgress = () => {},
-  signal,
-  baseUrl = OMR_API_BASE,
-} = {}) {
+export function uploadOmrJob({ file, onProgress = () => {}, signal } = {}) {
   if (!file) {
     return Promise.reject(
       new OmrRequestError('Choose a PDF file first.', {
@@ -94,7 +89,7 @@ export function uploadOmrJob({
       }
     }
 
-    xhr.open('POST', endpoint('/api/omr/jobs', baseUrl))
+    xhr.open('POST', endpoint('/api/omr/jobs'))
     xhr.setRequestHeader('Content-Type', 'application/pdf')
     xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name || 'score.pdf'))
     xhr.upload.onprogress = (event) => {
@@ -153,8 +148,8 @@ export function uploadOmrJob({
   })
 }
 
-export async function getOmrJob(id, { signal, baseUrl = OMR_API_BASE } = {}) {
-  const response = await fetch(endpoint(`/api/omr/jobs/${encodeURIComponent(id)}`, baseUrl), {
+export async function getOmrJob(id, { signal } = {}) {
+  const response = await fetch(endpoint(`/api/omr/jobs/${encodeURIComponent(id)}`), {
     signal,
     headers: { Accept: 'application/json' },
   })
@@ -163,11 +158,10 @@ export async function getOmrJob(id, { signal, baseUrl = OMR_API_BASE } = {}) {
   return payload
 }
 
-export async function fetchOmrMusicXml(id, { signal, baseUrl = OMR_API_BASE } = {}) {
-  const response = await fetch(
-    endpoint(`/api/omr/jobs/${encodeURIComponent(id)}/musicxml`, baseUrl),
-    { signal }
-  )
+export async function fetchOmrMusicXml(id, { signal } = {}) {
+  const response = await fetch(endpoint(`/api/omr/jobs/${encodeURIComponent(id)}/musicxml`), {
+    signal,
+  })
   if (!response.ok) {
     const payload = parseJson(await response.text())
     throw responseError(payload, response.status)
@@ -175,14 +169,8 @@ export async function fetchOmrMusicXml(id, { signal, baseUrl = OMR_API_BASE } = 
   return response.text()
 }
 
-export function musicXmlDownloadUrl(id, { baseUrl = OMR_API_BASE } = {}) {
-  return endpoint(`/api/omr/jobs/${encodeURIComponent(id)}/musicxml`, baseUrl)
-}
-
-export function omrErrorMessage(error) {
-  if (error?.name === 'AbortError') return ''
-  if (error instanceof OmrRequestError) return error.message
-  return error?.message || 'The PDF could not be converted.'
+export function musicXmlDownloadUrl(id) {
+  return endpoint(`/api/omr/jobs/${encodeURIComponent(id)}/musicxml`)
 }
 
 export function jobFailure(job) {

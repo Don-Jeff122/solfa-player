@@ -179,17 +179,18 @@ source, or a Pages build variable.
 - PDF uploads are capped at 25 MiB (26,214,400 bytes); MusicXML results are
   capped at 64 MiB and stored in KV chunks.
 
-### Local backend (fallback)
+### Local backend (development)
 
-You can bypass the Worker and run Audiveris locally:
+You can run Audiveris locally while developing:
 
 ```sh
 npm --prefix omr-service start
 ```
 
-Then set `VITE_OMR_API_URL=http://127.0.0.1:8788` in `.env.local`. The backend
-needs Java and Audiveris, or Docker; GitHub Pages cannot host it. Audiveris is
-AGPL V3, so review `omr-service/README.md` before distributing a container.
+Then set `VITE_OMR_API_URL=http://127.0.0.1:8788` in `.env.local`. This local
+setup is not part of the deployed app. The backend needs Java and Audiveris, or
+Docker; GitHub Pages cannot host it. Audiveris is AGPL V3, so review
+`omr-service/README.md` before distributing a container.
 
 ## Layout
 

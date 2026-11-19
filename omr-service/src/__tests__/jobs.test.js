@@ -5,12 +5,10 @@ const quiet = { info() {}, error() {} }
 
 function deferred() {
   let resolve
-  let reject
-  const promise = new Promise((res, rej) => {
+  const promise = new Promise((res) => {
     resolve = res
-    reject = rej
   })
-  return { promise, resolve, reject }
+  return { promise, resolve }
 }
 
 describe('JobQueue', () => {

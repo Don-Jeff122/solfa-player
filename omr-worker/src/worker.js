@@ -14,7 +14,7 @@ const DEFAULT_ORIGINS = [
   'http://localhost:4173',
 ]
 const PDF_TYPES = new Set(['application/pdf', 'application/x-pdf', 'application/octet-stream'])
-const FINAL_STATUSES = new Set(['complete', 'failed', 'cancelled'])
+const FINAL_STATUSES = new Set(['complete', 'failed'])
 const FINAL_SEQ = 9999
 
 function positiveInt(value, fallback) {
@@ -608,7 +608,6 @@ async function handleInternalResult(kv, id, request, cfg) {
       detail: '',
       summary: summary ?? null,
       warnings: Array.isArray(warnings) ? warnings : [],
-      resultBytes: body.bytes.byteLength,
       updatedAt: Date.now(),
     }),
     { expirationTtl: cfg.jobTtlSeconds }

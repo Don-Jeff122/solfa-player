@@ -109,7 +109,6 @@ export function parseAudiverisLine(line) {
     stepIndex: AUDIVERIS_STEPS.indexOf(step),
     totalSteps: AUDIVERIS_STEPS.length,
     sheet: sheetMatch ? Number(sheetMatch[1]) : null,
-    line: text.trim(),
   }
 }
 
@@ -283,7 +282,7 @@ async function findFiles(directory, extensions, depth = 0) {
   return found
 }
 
-export async function findMusicXmlOutputs(outputDir) {
+async function findMusicXmlOutputs(outputDir) {
   return findFiles(outputDir, new Set(['.xml', '.musicxml', '.mxl']))
 }
 

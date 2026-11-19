@@ -281,7 +281,10 @@ export function createOmrServer({
   })
 
   server.jobs = jobs
-  const cleanup = setInterval(() => jobs.cleanup(), 5 * 60 * 1000)
+  const cleanup = setInterval(() => {
+    jobs.cleanup()
+    limiter.cleanup()
+  }, 5 * 60 * 1000)
   cleanup.unref?.()
   server.on('close', () => clearInterval(cleanup))
   return server

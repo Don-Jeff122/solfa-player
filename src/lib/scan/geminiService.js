@@ -6,7 +6,7 @@ import {
 import { validateSolfaSystems } from './solfaValidation.js'
 import { createStaffPage } from './staffConversion.js'
 
-export const GEMINI_CONSENT_KEY = 'solfa-gemini-consent-v1'
+const GEMINI_CONSENT_KEY = 'solfa-gemini-consent-v1'
 
 const VOICE_ORDER = ['S', 'A', 'T', 'B']
 const VOICE_SET = new Set(VOICE_ORDER)
@@ -14,7 +14,7 @@ const MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 90000
 
-export function geminiProxyUrl() {
+function geminiProxyUrl() {
   const value = import.meta.env?.VITE_GEMINI_PROXY_URL
   return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : ''
 }
@@ -231,7 +231,7 @@ export function createGeminiHymnalPage(pageNumber, value) {
   return { ok: true, page }
 }
 
-export function createGeminiStaffPage(pageNumber, value) {
+function createGeminiStaffPage(pageNumber, value) {
   if (!value?.staff) {
     return { ok: false, error: 'Gemini returned no staff notes to convert.' }
   }

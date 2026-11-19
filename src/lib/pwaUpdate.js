@@ -1,5 +1,5 @@
 export const PWA_RELOAD_KEY = 'solfa-pwa-reload-at'
-export const PWA_RELOAD_COOLDOWN_MS = 10000
+const PWA_RELOAD_COOLDOWN_MS = 10000
 
 const CHUNK_ERROR_RE =
   /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|unable to preload css/i
