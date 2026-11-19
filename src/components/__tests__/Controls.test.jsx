@@ -56,13 +56,13 @@ function playButton(html) {
 }
 
 describe('Playback controls', () => {
-  it('shows Preparing while background audio is prepared', () => {
+  it('keeps Play available while background audio is prepared', () => {
     const button = playButton(renderControls({ preparing: true }))
 
-    expect(button).toContain('Preparing…')
+    expect(button).toContain('>Play<')
     expect(button).toContain('aria-busy="true"')
-    expect(button).toContain('Audio is being prepared')
-    expect(button).not.toContain('>Play<')
+    expect(button).toContain('Background audio is being prepared')
+    expect(button).not.toContain('Preparing…')
   })
 
   it('shows Play when audio is ready', () => {
@@ -77,6 +77,6 @@ describe('Playback controls', () => {
     const button = playButton(renderControls({ isPaused: true, preparing: true }))
 
     expect(button).toContain('Resume')
-    expect(button).not.toContain('Preparing…')
+    expect(button).not.toContain('aria-busy="true"')
   })
 })

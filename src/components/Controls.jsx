@@ -82,12 +82,12 @@ export default function Controls({
                 aria-busy={preparing && !isPaused ? true : undefined}
                 title={
                   preparing && !isPaused
-                    ? 'Audio is being prepared; playback will start when ready'
+                    ? 'Background audio is being prepared; live playback starts immediately'
                     : undefined
                 }
               >
                 <span className="btn-icon play" />
-                {preparing && !isPaused ? 'Preparing…' : isPaused ? 'Resume' : 'Play'}
+                {isPaused ? 'Resume' : 'Play'}
               </button>
               {isPaused && (
                 <button type="button" className="btn btn-stop" onClick={onStop}>

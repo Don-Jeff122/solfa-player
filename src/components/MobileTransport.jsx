@@ -25,7 +25,7 @@ export default function MobileTransport({
   const total = duration > 0 ? duration : 0
   const shown = Math.min(Math.max(progress, 0), total)
   const tempoFill = ((tempo - TEMPO_MIN) / (TEMPO_MAX - TEMPO_MIN)) * 100
-  const playLabel = preparing && !isPaused ? 'Preparing audio' : isPaused ? 'Resume' : 'Play'
+  const playLabel = isPaused ? 'Resume' : 'Play'
   return (
     <div
       className={`mobile-transport${visible ? ' is-visible' : ''}`}
@@ -88,7 +88,7 @@ export default function MobileTransport({
               aria-label={playLabel}
               title={
                 preparing && !isPaused
-                  ? 'Audio is being prepared; playback will start when ready'
+                  ? 'Background audio is being prepared; live playback starts immediately'
                   : undefined
               }
             >

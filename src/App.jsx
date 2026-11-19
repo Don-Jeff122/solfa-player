@@ -16,6 +16,7 @@ import {
   sustainSeconds,
 } from './audio/voices.js'
 import { audioBufferToWavBlob } from './audio/wav.js'
+import { audioChangeKind, audioContentKey, audioRenderKey } from './audio/keys.js'
 import { parseSolfa } from './lib/parseSolfa.js'
 import {
   buildSequences,
@@ -203,8 +204,6 @@ export default function App() {
   const bgJobRef = useRef({ id: 0, key: null })
   const bgRetiredRef = useRef([])
   const suppressPauseRef = useRef(false)
-  const pendingPlayRef = useRef(false)
-  const backgroundKeyRef = useRef('')
   const backgroundPlaybackKeyRef = useRef(null)
   const mediaActionsRef = useRef({})
   const draftRef = useRef(null)
@@ -405,12 +404,10 @@ export default function App() {
     return () => observer.disconnect()
   }, [canPlay])
 
-  // Everything that changes the sound also invalidates a prepared track.
-  const backgroundKey = useMemo(
+  const contentKey = useMemo(() => audioContentKey(result, key), [result, key])
+  const renderKey = useMemo(
     () =>
-      JSON.stringify({
-        text,
-        key,
+      audioRenderKey(contentKey, {
         octave,
         activeParts,
         voiceOctaves,
@@ -419,13 +416,17 @@ export default function App() {
         sustain,
         metronome,
       }),
-    [text, key, octave, activeParts, voiceOctaves, tempo, sound, sustain, metronome]
+    [contentKey, octave, activeParts, voiceOctaves, tempo, sound, sustain, metronome]
   )
   const timeline = useMemo(
     () => (sequences ? buildTimeline(sequences, tempo) : []),
     [sequences, tempo]
   )
-  backgroundKeyRef.current = backgroundKey
+  const renderKeyRef = useRef(renderKey)
+  const preparedContentKeyRef = useRef(contentKey)
+  const previousContentKeyRef = useRef(contentKey)
+  const previousRenderKeyRef = useRef(renderKey)
+  renderKeyRef.current = renderKey
 
   const cancelUiFrame = useCallback(() => {
     if (uiFrameRef.current) {
@@ -462,7 +463,6 @@ export default function App() {
   }, [synth, liveFallback])
 
   const stopPlayback = useCallback(() => {
-    pendingPlayRef.current = false
     backgroundPlaybackKeyRef.current = null
     if (handleRef.current) {
       handleRef.current.stop()
@@ -501,18 +501,6 @@ export default function App() {
   useEffect(() => {
     if (sheetKey) setUiKey(sheetKey)
   }, [sheetKey])
-
-  useEffect(() => {
-    if (isPlaying || isPaused) stopPlayback()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sequences])
-
-  // A prepared track is a snapshot of the settings. Tempo, instrument, ring,
-  // metronome and part changes make it wrong, so stop instead of playing on.
-  useEffect(() => {
-    const playingKey = backgroundPlaybackKeyRef.current
-    if (playingKey && playingKey !== backgroundKey) stopPlayback()
-  }, [backgroundKey, stopPlayback])
 
   useEffect(() => {
     return () => {
@@ -592,6 +580,24 @@ export default function App() {
     setIsPlaying(true)
   }, [sequences, totalBeats, tempo, sound, ring, synth, metronome, resetUi, queueUi])
 
+  useEffect(() => {
+    const change = audioChangeKind(
+      { contentKey: previousContentKeyRef.current, renderKey: previousRenderKeyRef.current },
+      { contentKey, renderKey }
+    )
+    previousContentKeyRef.current = contentKey
+    previousRenderKeyRef.current = renderKey
+    if (change === 'none') return
+    if (change === 'content') {
+      if (isPlaying || isPaused) stopPlayback()
+      return
+    }
+    if (isPlaying) {
+      stopPlayback()
+      startLivePlayback()
+    }
+  }, [contentKey, renderKey, isPlaying, isPaused, stopPlayback, startLivePlayback])
+
   const updateMediaPosition = useCallback((at) => {
     if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
     const total = bgCacheRef.current?.duration
@@ -647,25 +653,18 @@ export default function App() {
     [timeline, queueUi]
   )
 
-  /**
-   * Turn the current song into a WAV the page can hand to an <audio> element.
-   *
-   * The browser treats that element as real media playback, unlike live Web
-   * Audio, so it keeps going when the tab is hidden, another app is open, or
-   * the phone locks. One render is reused for Play, Stop, Repeat, pause and
-   * seek until a setting that changes the sound changes.
-   */
   const prepareBackground = useCallback(async () => {
     if (!sequences || !sequences.length || !(totalBeats > 0)) return
     const cached = bgCacheRef.current
-    if (cached?.key === backgroundKey) {
+    if (cached?.key === renderKey) {
+      preparedContentKeyRef.current = contentKey
       setBgStatus('ready')
       setBgDuration(cached.duration)
       return
     }
-    if (bgJobRef.current.key === backgroundKey) return
+    if (bgJobRef.current.key === renderKey) return
     const id = ++bgJobRef.current.id
-    bgJobRef.current.key = backgroundKey
+    bgJobRef.current.key = renderKey
     setBgStatus('preparing')
     try {
       const tail = Math.max(1.4, getVoice(sound).release + ring + 0.3)
@@ -676,12 +675,12 @@ export default function App() {
         sustain: ring,
         metronome,
       })
-      if (bgJobRef.current.id !== id || backgroundKeyRef.current !== backgroundKey) {
+      if (bgJobRef.current.id !== id || renderKeyRef.current !== renderKey) {
         return
       }
       const url = URL.createObjectURL(audioBufferToWavBlob(buffer))
       const previous = bgCacheRef.current
-      bgCacheRef.current = { key: backgroundKey, url, duration: buffer.duration }
+      bgCacheRef.current = { key: renderKey, url, duration: buffer.duration }
       if (previous?.url && previous.url !== url) {
         if (audioRef.current && audioRef.current.src === previous.url) {
           bgRetiredRef.current.push(previous.url)
@@ -689,6 +688,7 @@ export default function App() {
           URL.revokeObjectURL(previous.url)
         }
       }
+      preparedContentKeyRef.current = contentKey
       setBgDuration(buffer.duration)
       setBgStatus('ready')
     } catch (err) {
@@ -698,7 +698,7 @@ export default function App() {
     } finally {
       if (bgJobRef.current.id === id) bgJobRef.current.key = null
     }
-  }, [backgroundKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
+  }, [contentKey, renderKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
 
   const failBackgroundPlayback = useCallback(() => {
     backgroundPlaybackKeyRef.current = null
@@ -712,8 +712,7 @@ export default function App() {
   const startBackgroundPlayback = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== backgroundKey) return false
-    pendingPlayRef.current = false
+    if (!audio || !cached || cached.key !== renderKey) return false
     setAudioError(null)
     setLiveFallback(false)
     setAudioSessionType('playback')
@@ -731,7 +730,7 @@ export default function App() {
     resetUi()
     setPosition(0)
     setBgDuration(cached.duration)
-    backgroundPlaybackKeyRef.current = backgroundKey
+    backgroundPlaybackKeyRef.current = renderKey
     let playing
     try {
       playing = audio.play()
@@ -753,13 +752,12 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [backgroundKey, resetUi, updateMediaPosition, failBackgroundPlayback])
+  }, [renderKey, resetUi, updateMediaPosition, failBackgroundPlayback])
 
   const resumeBackground = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== backgroundKey) return false
-    pendingPlayRef.current = false
+    if (!audio || !cached || cached.key !== renderKey) return false
     setAudioError(null)
     setLiveFallback(false)
     setAudioSessionType('playback')
@@ -775,7 +773,7 @@ export default function App() {
       }
       setPosition(0)
     }
-    backgroundPlaybackKeyRef.current = backgroundKey
+    backgroundPlaybackKeyRef.current = renderKey
     let playing
     try {
       playing = audio.play()
@@ -797,7 +795,7 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [backgroundKey, updateMediaPosition, failBackgroundPlayback])
+  }, [renderKey, updateMediaPosition, failBackgroundPlayback])
 
   const pauseBackground = useCallback(() => {
     const audio = audioRef.current
@@ -893,34 +891,17 @@ export default function App() {
     startLivePlayback()
   }, [resetUi, startLivePlayback])
 
-  const startPlayback = useCallback(() => {
-    if (!liveFallback && bgCacheRef.current?.key === backgroundKey) {
-      startBackgroundPlayback()
-      return
-    }
-    startLivePlayback()
-  }, [liveFallback, backgroundKey, startBackgroundPlayback, startLivePlayback])
-
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
-  startRef.current = startPlayback
+  startRef.current = startLivePlayback
 
   const handlePlay = () => {
-    if (isPaused && bgStatus !== 'error' && bgCacheRef.current?.key === backgroundKey) {
+    if (isPaused && !liveFallback && bgCacheRef.current?.key === renderKey) {
       resumeBackground()
       return
     }
     stopPlayback()
-    if (bgStatus === 'error') {
-      startLivePlayback()
-      return
-    }
-    if (bgCacheRef.current?.key === backgroundKey) {
-      startBackgroundPlayback()
-      return
-    }
-    pendingPlayRef.current = true
-    prepareBackground()
+    startLivePlayback()
   }
 
   mediaActionsRef.current = {
@@ -936,13 +917,16 @@ export default function App() {
     if (audio) audio.loop = repeat
   }, [repeat])
 
-  // Prepare ahead of time, but never while the editor is focused or a track is
-  // already playing: typing should not start a series of expensive renders.
   useEffect(() => {
     const cached = bgCacheRef.current
-    if (cached?.key === backgroundKey) {
+    if (cached?.key === renderKey) {
+      preparedContentKeyRef.current = contentKey
       setBgStatus('ready')
       setBgDuration(cached.duration)
+      return
+    }
+    if (preparedContentKeyRef.current === contentKey) {
+      setBgStatus('stale')
       return
     }
     if (
@@ -961,7 +945,8 @@ export default function App() {
     const timer = setTimeout(prepareBackground, 400)
     return () => clearTimeout(timer)
   }, [
-    backgroundKey,
+    contentKey,
+    renderKey,
     isPlaying,
     isPaused,
     rendering,
@@ -972,22 +957,17 @@ export default function App() {
   ])
 
   useEffect(() => {
-    pendingPlayRef.current = false
-  }, [backgroundKey])
-
-  useEffect(() => {
-    if (!pendingPlayRef.current) return
-    if (bgCacheRef.current?.key === backgroundKey && bgStatus === 'ready') {
-      pendingPlayRef.current = false
+    if (typeof document === 'undefined') return undefined
+    const onVisibility = () => {
+      if (document.visibilityState !== 'hidden' || !isPlaying || !liveFallback) return
+      const cached = bgCacheRef.current
+      if (!cached || cached.key !== renderKey) return
       stopPlayback()
       startBackgroundPlayback()
-      return
     }
-    if (bgStatus === 'error') {
-      pendingPlayRef.current = false
-      startLivePlayback()
-    }
-  }, [backgroundKey, bgStatus, stopPlayback, startBackgroundPlayback, startLivePlayback])
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [isPlaying, liveFallback, renderKey, stopPlayback, startBackgroundPlayback])
 
   useEffect(() => {
     if (!isPlaying || liveFallback) return
@@ -1685,7 +1665,7 @@ export default function App() {
             {!audioError && error && <span className="status-error">{error}</span>}
             {!error && rendering && <span className="status-busy">Rendering audio…</span>}
             {!audioError && !error && bgStatus === 'preparing' && (
-              <span className="status-busy">Preparing audio…</span>
+              <span className="status-busy">Preparing background audio…</span>
             )}
             {!audioError && !error && !liveFallback && bgStatus === 'error' && (
               <span className="status-error">

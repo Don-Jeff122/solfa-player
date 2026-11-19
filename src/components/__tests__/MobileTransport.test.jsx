@@ -45,11 +45,12 @@ describe('MobileTransport', () => {
     expect(html).toContain('class="mobile-transport-title" title="Morning Hymn"')
   })
 
-  it('shows the preparing state', () => {
+  it('keeps Play available while background audio is prepared', () => {
     const html = renderTransport({ preparing: true })
 
     expect(html).toContain('aria-busy="true"')
-    expect(html).toContain('aria-label="Preparing audio"')
+    expect(html).toContain('aria-label="Play"')
+    expect(html).toContain('Background audio is being prepared')
     expect(html).toContain('mobile-transport-spinner')
   })
 
