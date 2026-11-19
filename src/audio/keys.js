@@ -12,6 +12,10 @@ export function audioContentKey(result, key) {
   })
 }
 
+export function audioPlaybackSource(cacheKey, renderKey, liveFallback = false) {
+  return !liveFallback && cacheKey === renderKey ? 'media' : 'live'
+}
+
 export function audioRenderKey(contentKey, settings) {
   const { octave, activeParts, voiceOctaves, tempo, sound, sustain, metronome } = settings
   return JSON.stringify({

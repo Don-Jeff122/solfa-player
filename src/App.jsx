@@ -16,7 +16,12 @@ import {
   sustainSeconds,
 } from './audio/voices.js'
 import { audioBufferToWavBlob } from './audio/wav.js'
-import { audioChangeKind, audioContentKey, audioRenderKey } from './audio/keys.js'
+import {
+  audioChangeKind,
+  audioContentKey,
+  audioPlaybackSource,
+  audioRenderKey,
+} from './audio/keys.js'
 import { parseSolfa } from './lib/parseSolfa.js'
 import {
   buildSequences,
@@ -204,6 +209,7 @@ export default function App() {
   const bgJobRef = useRef({ id: 0, key: null })
   const bgRetiredRef = useRef([])
   const suppressPauseRef = useRef(false)
+  const pendingPlayRef = useRef(false)
   const backgroundPlaybackKeyRef = useRef(null)
   const mediaActionsRef = useRef({})
   const draftRef = useRef(null)
@@ -463,6 +469,7 @@ export default function App() {
   }, [synth, liveFallback])
 
   const stopPlayback = useCallback(() => {
+    pendingPlayRef.current = false
     backgroundPlaybackKeyRef.current = null
     if (handleRef.current) {
       handleRef.current.stop()
@@ -589,9 +596,13 @@ export default function App() {
     previousRenderKeyRef.current = renderKey
     if (change === 'none') return
     if (change === 'content') {
-      if (isPlaying || isPaused) stopPlayback()
+      if (isPlaying || isPaused) {
+        stopPlayback()
+        pendingPlayRef.current = true
+      }
       return
     }
+    pendingPlayRef.current = false
     if (isPlaying) {
       stopPlayback()
       startLivePlayback()
@@ -891,17 +902,24 @@ export default function App() {
     startLivePlayback()
   }, [resetUi, startLivePlayback])
 
+  const startPlayback = useCallback(() => {
+    const source = audioPlaybackSource(bgCacheRef.current?.key, renderKey, liveFallback)
+    if (source === 'media' && startBackgroundPlayback()) return
+    startLivePlayback()
+  }, [liveFallback, renderKey, startBackgroundPlayback, startLivePlayback])
+
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
-  startRef.current = startLivePlayback
+  startRef.current = startPlayback
 
   const handlePlay = () => {
+    pendingPlayRef.current = false
     if (isPaused && !liveFallback && bgCacheRef.current?.key === renderKey) {
       resumeBackground()
       return
     }
     stopPlayback()
-    startLivePlayback()
+    startPlayback()
   }
 
   mediaActionsRef.current = {
@@ -955,6 +973,20 @@ export default function App() {
     totalBeats,
     prepareBackground,
   ])
+
+  useEffect(() => {
+    if (!pendingPlayRef.current) return
+    if (bgCacheRef.current?.key === renderKey && bgStatus === 'ready') {
+      pendingPlayRef.current = false
+      stopPlayback()
+      startBackgroundPlayback()
+      return
+    }
+    if (bgStatus === 'error') {
+      pendingPlayRef.current = false
+      startLivePlayback()
+    }
+  }, [renderKey, bgStatus, stopPlayback, startBackgroundPlayback, startLivePlayback])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
