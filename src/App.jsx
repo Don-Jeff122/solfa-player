@@ -20,6 +20,7 @@ import {
   audioChangeKind,
   audioContentKey,
   audioLiveSettingsKey,
+  audioLiveWavStartTime,
   audioPlaybackRate,
   audioPlaybackSource,
   audioRenderKey,
@@ -211,6 +212,10 @@ export default function App() {
   const bgCacheRef = useRef(null)
   const bgJobRef = useRef({ id: 0, key: null })
   const bgRetiredRef = useRef([])
+  const liveWavCacheRef = useRef(null)
+  const liveWavJobRef = useRef({ id: 0, key: null })
+  const activeWavCacheRef = useRef(null)
+  const livePlaybackRef = useRef({ beat: 0, tempo: 0, startedAt: 0 })
   const suppressPauseRef = useRef(false)
   const pendingPlayRef = useRef(false)
   const backgroundPlaybackKeyRef = useRef(null)
@@ -444,12 +449,14 @@ export default function App() {
     [sequences, tempo]
   )
   const contentKeyRef = useRef(contentKey)
+  const renderKeyRef = useRef(renderKey)
   const preparedContentKeyRef = useRef(null)
   const previousContentKeyRef = useRef(contentKey)
   const previousRenderKeyRef = useRef(renderKey)
   const previousLiveSettingsKeyRef = useRef(liveSettingsKey)
   const pendingLiveStartBeatRef = useRef(null)
   contentKeyRef.current = contentKey
+  renderKeyRef.current = renderKey
 
   const cancelUiFrame = useCallback(() => {
     if (uiFrameRef.current) {
@@ -486,8 +493,9 @@ export default function App() {
   }, [synth, liveFallback])
 
   const stopPlayback = useCallback(() => {
-    pendingPlayRef.current = false
     backgroundPlaybackKeyRef.current = null
+    activeWavCacheRef.current = null
+
     if (handleRef.current) {
       handleRef.current.stop()
       handleRef.current = null
@@ -541,9 +549,12 @@ export default function App() {
         }
       }
       if (bgCacheRef.current?.url) URL.revokeObjectURL(bgCacheRef.current.url)
+      if (liveWavCacheRef.current?.url) URL.revokeObjectURL(liveWavCacheRef.current.url)
       for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
       // eslint-disable-next-line react-hooks/exhaustive-deps
       bgJobRef.current.id++
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      liveWavJobRef.current.id++
       setAudioSessionType('auto')
       if (typeof navigator !== 'undefined' && navigator.mediaSession) {
         try {
@@ -565,6 +576,12 @@ export default function App() {
     resetUi()
     setAudioError(null)
     setLiveFallback(true)
+    activeWavCacheRef.current = null
+    livePlaybackRef.current = {
+      beat: Math.max(0, Number(startBeat) || 0),
+      tempo,
+      startedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+    }
     try {
       const ctx = synth._ensureCtx?.() || synth.ctx
       if (ctx?.state === 'suspended' && ctx.resume) ctx.resume()
@@ -625,8 +642,9 @@ export default function App() {
     }
     pendingPlayRef.current = false
     if (!isPlaying) {
-      const cached = bgCacheRef.current
-      if (liveSettingChanged && !liveFallback && cached?.key === contentKey) {
+      const cached = activeWavCacheRef.current || bgCacheRef.current
+      const expectedKey = backgroundPlaybackKeyRef.current || contentKey
+      if (liveSettingChanged && !liveFallback && cached?.key === expectedKey) {
         pendingLiveStartBeatRef.current = audioStartBeat(
           audioRef.current?.currentTime || 0,
           cached.renderTempo
@@ -640,8 +658,9 @@ export default function App() {
       return
     }
     if (!liveSettingChanged) return
-    const cached = bgCacheRef.current
-    if (cached?.key !== contentKey) return
+    const cached = activeWavCacheRef.current || bgCacheRef.current
+    const expectedKey = backgroundPlaybackKeyRef.current || contentKey
+    if (cached?.key !== expectedKey) return
     const startBeat = audioStartBeat(audioRef.current?.currentTime || 0, cached.renderTempo)
     pendingLiveStartBeatRef.current = null
     stopPlayback()
@@ -658,24 +677,25 @@ export default function App() {
   ])
 
   const getPlaybackRate = useCallback(() => {
-    const cached = bgCacheRef.current
-    if (liveFallback || cached?.key !== contentKey) return 1
+    if (liveFallback) return 1
+    const cached = activeWavCacheRef.current
+    if (!cached) return 1
     return audioPlaybackRate(cached.renderTempo, tempo)
-  }, [contentKey, liveFallback, tempo])
+  }, [liveFallback, tempo])
 
   useEffect(() => {
     const audio = audioRef.current
-    const cached = bgCacheRef.current
-    if (!audio || liveFallback || cached?.key !== contentKey) return
+    const cached = activeWavCacheRef.current
+    if (!audio || liveFallback || !cached) return
     if ('preservesPitch' in audio) audio.preservesPitch = true
     if ('webkitPreservesPitch' in audio) audio.webkitPreservesPitch = true
     audio.playbackRate = audioPlaybackRate(cached.renderTempo, tempo)
-  }, [contentKey, tempo, liveFallback, bgStatus])
+  }, [tempo, liveFallback, bgStatus])
 
   const updateMediaPosition = useCallback(
     (at) => {
       if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
-      const total = bgCacheRef.current?.duration
+      const total = activeWavCacheRef.current?.duration
       if (!Number.isFinite(total) || total <= 0) return
       const mediaPosition = Math.min(Math.max(Number(at) || 0, 0), Math.max(total - 0.01, 0))
       try {
@@ -699,8 +719,8 @@ export default function App() {
   const syncTimelineUi = useCallback(
     (at) => {
       const activeTimeline =
-        !liveFallback && bgCacheRef.current?.timeline?.length
-          ? bgCacheRef.current.timeline
+        !liveFallback && activeWavCacheRef.current?.timeline?.length
+          ? activeWavCacheRef.current.timeline
           : timeline
       if (!activeTimeline.length) return
       const state = timelineAt(activeTimeline, at)
@@ -787,6 +807,53 @@ export default function App() {
     }
   }, [contentKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
 
+  const prepareLiveWav = useCallback(async () => {
+    if (!sequences || !sequences.length || !(totalBeats > 0)) return
+    const cached = liveWavCacheRef.current
+    if (cached?.key === renderKey) return
+    if (liveWavJobRef.current.key === renderKey) return
+    const id = ++liveWavJobRef.current.id
+    liveWavJobRef.current.key = renderKey
+    try {
+      const tail = Math.max(1.4, getVoice(sound).release + ring + 0.3)
+      const buffer = await synth.render(sequences, {
+        tempo,
+        tail,
+        voice: sound,
+        sustain: ring,
+        metronome,
+      })
+      if (liveWavJobRef.current.id !== id || renderKeyRef.current !== renderKey) return
+      const url = URL.createObjectURL(audioBufferToWavBlob(buffer))
+      const previous = liveWavCacheRef.current
+      liveWavCacheRef.current = {
+        key: renderKey,
+        url,
+        duration: buffer.duration,
+        renderTempo: tempo,
+        timeline: buildTimeline(sequences, tempo),
+      }
+      if (previous?.url && previous.url !== url) {
+        if (audioRef.current && audioRef.current.src === previous.url) {
+          bgRetiredRef.current.push(previous.url)
+        } else {
+          URL.revokeObjectURL(previous.url)
+        }
+      }
+    } catch (err) {
+      if (liveWavJobRef.current.id !== id) return
+      console.error('Live background audio preparation failed:', err)
+    } finally {
+      if (liveWavJobRef.current.id === id) liveWavJobRef.current.key = null
+    }
+  }, [renderKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
+
+  useEffect(() => {
+    if (!liveFallback || !isPlaying || !canPlay) return undefined
+    const timer = setTimeout(prepareLiveWav, 300)
+    return () => clearTimeout(timer)
+  }, [liveFallback, isPlaying, canPlay, prepareLiveWav])
+
   const failBackgroundPlayback = useCallback(() => {
     backgroundPlaybackKeyRef.current = null
     setIsPlaying(false)
@@ -805,56 +872,79 @@ export default function App() {
     [tempo]
   )
 
-  const startBackgroundPlayback = useCallback(() => {
-    const audio = audioRef.current
-    const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== contentKey) return false
-    setAudioError(null)
-    setLiveFallback(false)
-    setAudioSessionType('playback')
-    audio.loop = repeatRef.current
-    applyMediaRate(audio, cached)
-    if (audio.src !== cached.url) {
-      audio.src = cached.url
-      for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
-      bgRetiredRef.current = []
-    }
-    try {
-      audio.currentTime = 0
-    } catch {
-      /* metadata not ready yet */
-    }
-    resetUi()
-    setPosition(0)
-    setBgDuration(cached.duration)
-    backgroundPlaybackKeyRef.current = contentKey
-    let playing
-    try {
-      playing = audio.play()
-    } catch (err) {
-      failBackgroundPlayback(err)
-      return false
-    }
-    setIsPlaying(true)
-    setIsPaused(false)
-    if (typeof navigator !== 'undefined' && navigator.mediaSession) {
-      try {
-        navigator.mediaSession.playbackState = 'playing'
-      } catch {
-        /* unsupported */
+  const startCachedPlayback = useCallback(
+    (cached, expectedKey, startTime = 0) => {
+      const audio = audioRef.current
+      if (!audio || !cached || cached.key !== expectedKey) return false
+      setAudioError(null)
+      setLiveFallback(false)
+      activeWavCacheRef.current = cached
+      setAudioSessionType('playback')
+      audio.loop = repeatRef.current
+      applyMediaRate(audio, cached)
+      if (audio.src !== cached.url) {
+        audio.src = cached.url
+        for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
+        bgRetiredRef.current = []
       }
-    }
-    updateMediaPosition(0)
-    if (playing && typeof playing.catch === 'function') {
-      playing.catch(failBackgroundPlayback)
-    }
-    return true
-  }, [contentKey, applyMediaRate, resetUi, updateMediaPosition, failBackgroundPlayback])
+      const start = Math.min(
+        Math.max(Number(startTime) || 0, 0),
+        Math.max(cached.duration - 0.01, 0)
+      )
+      try {
+        audio.currentTime = start
+      } catch {
+        /* metadata not ready yet */
+      }
+      resetUi()
+      setPosition(start)
+      setBgDuration(cached.duration)
+      backgroundPlaybackKeyRef.current = expectedKey
+      let playing
+      try {
+        playing = audio.play()
+      } catch (err) {
+        failBackgroundPlayback(err)
+        return false
+      }
+      setIsPlaying(true)
+      setIsPaused(false)
+      if (typeof navigator !== 'undefined' && navigator.mediaSession) {
+        try {
+          navigator.mediaSession.playbackState = 'playing'
+        } catch {
+          /* unsupported */
+        }
+      }
+      updateMediaPosition(start)
+      if (playing && typeof playing.catch === 'function') {
+        playing.catch(failBackgroundPlayback)
+      }
+      return true
+    },
+    [applyMediaRate, resetUi, updateMediaPosition, failBackgroundPlayback]
+  )
+
+  const startBackgroundPlayback = useCallback(() => {
+    const cached = bgCacheRef.current
+    if (!cached || cached.key !== contentKey) return false
+    return startCachedPlayback(cached, contentKey, 0)
+  }, [contentKey, startCachedPlayback])
+
+  const startLiveWavPlayback = useCallback(
+    (startTime = 0) => {
+      const cached = liveWavCacheRef.current
+      if (!cached || cached.key !== renderKey) return false
+      return startCachedPlayback(cached, renderKey, startTime)
+    },
+    [renderKey, startCachedPlayback]
+  )
 
   const resumeBackground = useCallback(() => {
     const audio = audioRef.current
-    const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== contentKey) return false
+    const cached = activeWavCacheRef.current
+    const expectedKey = backgroundPlaybackKeyRef.current
+    if (!audio || !cached || !expectedKey || cached.key !== expectedKey) return false
     setAudioError(null)
     setLiveFallback(false)
     setAudioSessionType('playback')
@@ -871,7 +961,8 @@ export default function App() {
       }
       setPosition(0)
     }
-    backgroundPlaybackKeyRef.current = contentKey
+    backgroundPlaybackKeyRef.current = expectedKey
+    setBgDuration(cached.duration)
     let playing
     try {
       playing = audio.play()
@@ -893,7 +984,7 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [contentKey, applyMediaRate, updateMediaPosition, failBackgroundPlayback])
+  }, [applyMediaRate, updateMediaPosition, failBackgroundPlayback])
 
   const pauseBackground = useCallback(() => {
     const audio = audioRef.current
@@ -913,7 +1004,7 @@ export default function App() {
   const seekBackground = useCallback(
     (target) => {
       const audio = audioRef.current
-      const total = bgCacheRef.current?.duration
+      const total = activeWavCacheRef.current?.duration
       if (!audio || !Number.isFinite(total) || total <= 0) return
       const rate = getPlaybackRate()
       const shownTotal = total / rate
@@ -993,10 +1084,15 @@ export default function App() {
   }, [resetUi, startLivePlayback])
 
   const startPlayback = useCallback(() => {
-    const source = audioPlaybackSource(bgCacheRef.current?.key, contentKey, liveFallback)
-    if (source === 'media' && startBackgroundPlayback()) return
+    const cached = activeWavCacheRef.current
+    const expectedKey = backgroundPlaybackKeyRef.current
+    const source = audioPlaybackSource(cached?.key, expectedKey, liveFallback)
+    if (source === 'media' && cached && expectedKey && startCachedPlayback(cached, expectedKey, 0)) {
+      return
+    }
+    if (source === 'media' && !liveFallback && startBackgroundPlayback()) return
     startLivePlayback()
-  }, [liveFallback, contentKey, startBackgroundPlayback, startLivePlayback])
+  }, [liveFallback, startBackgroundPlayback, startCachedPlayback, startLivePlayback])
 
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
@@ -1011,12 +1107,18 @@ export default function App() {
       startLivePlayback(pendingStartBeat)
       return
     }
-    if (isPaused && !liveFallback && bgCacheRef.current?.key === contentKey) {
+    if (isPaused && !liveFallback && activeWavCacheRef.current) {
       resumeBackground()
       return
     }
-    const cached = bgCacheRef.current
-    if (cached?.key === contentKey) {
+    const cached = activeWavCacheRef.current
+    const expectedKey = backgroundPlaybackKeyRef.current
+    if (cached && expectedKey && cached.key === expectedKey) {
+      if (isPlaying || isPaused) stopPlayback()
+      if (startCachedPlayback(cached, expectedKey, 0)) return
+    }
+    const primary = bgCacheRef.current
+    if (primary?.key === contentKey) {
       if (isPlaying || isPaused) stopPlayback()
       if (startBackgroundPlayback()) return
     }
@@ -1094,6 +1196,14 @@ export default function App() {
     if (typeof document === 'undefined') return undefined
     const onVisibility = () => {
       if (document.visibilityState !== 'hidden' || !isPlaying || !liveFallback) return
+      const liveCached = liveWavCacheRef.current
+      if (liveCached?.key === renderKey) {
+        const live = livePlaybackRef.current
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+        const startTime = audioLiveWavStartTime(live, liveCached.renderTempo, now)
+        stopPlayback()
+        if (startLiveWavPlayback(startTime)) return
+      }
       const cached = bgCacheRef.current
       if (!cached || cached.key !== contentKey) return
       stopPlayback()
@@ -1101,7 +1211,15 @@ export default function App() {
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [isPlaying, liveFallback, contentKey, stopPlayback, startBackgroundPlayback])
+  }, [
+    isPlaying,
+    liveFallback,
+    contentKey,
+    renderKey,
+    stopPlayback,
+    startBackgroundPlayback,
+    startLiveWavPlayback,
+  ])
 
   useEffect(() => {
     if (!isPlaying || liveFallback) return
@@ -1431,10 +1549,7 @@ export default function App() {
       : activeParts.length === 1
         ? activeParts[0]
         : `${activeParts.length} parts`
-  const mediaRate =
-    !liveFallback && bgCacheRef.current?.key === contentKey
-      ? audioPlaybackRate(bgCacheRef.current.renderTempo, tempo)
-      : 1
+  const mediaRate = getPlaybackRate()
   const shownDuration = bgDuration / mediaRate
   const shownPosition = position / mediaRate
 

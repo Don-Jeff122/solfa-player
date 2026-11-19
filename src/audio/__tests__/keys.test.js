@@ -3,6 +3,7 @@ import {
   audioChangeKind,
   audioContentKey,
   audioLiveSettingsKey,
+  audioLiveWavStartTime,
   audioPlaybackRate,
   audioPlaybackSource,
   audioRenderKey,
@@ -76,6 +77,14 @@ describe('audio keys', () => {
     expect(audioStartBeat(RENDER_LEAD_SECONDS, 120)).toBe(0)
     expect(audioStartBeat(RENDER_LEAD_SECONDS + 1, 120)).toBe(2)
     expect(audioStartBeat(0, 120)).toBe(0)
+  })
+
+  it('maps live playback position back onto a prepared WAV timeline', () => {
+    const playback = { beat: 4, tempo: 120, startedAt: 1000 }
+
+    expect(audioLiveWavStartTime(playback, 120, 1000)).toBe(RENDER_LEAD_SECONDS + 2)
+    expect(audioLiveWavStartTime(playback, 120, 2000)).toBe(RENDER_LEAD_SECONDS + 3)
+    expect(audioLiveWavStartTime(playback, 60, 2000)).toBe(RENDER_LEAD_SECONDS + 6)
   })
 
   it('excludes tempo and repeat from the live handoff key', () => {
