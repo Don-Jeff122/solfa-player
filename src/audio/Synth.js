@@ -738,6 +738,7 @@ export class Synth {
     seqs,
     {
       tempo = 90,
+      startBeat = 0,
       voice,
       sustain = 0,
       metronome = false,
@@ -753,11 +754,12 @@ export class Synth {
     const chain = this._masterChain(ctx, ctx.destination, profile.lowPower ? '2x' : '4x')
     const bus = chain.input
     const beat = 60 / tempo
+    const offsetBeats = Math.max(0, Number(startBeat) || 0)
     const timers = []
     const budget = newPlaybackBudget()
     let stopped = false
 
-    const t0 = ctx.currentTime + RENDER_LEAD_SECONDS
+    const t0 = ctx.currentTime + RENDER_LEAD_SECONDS - offsetBeats * beat
     let longestBeats = 0
     seqs.forEach((seq) => {
       longestBeats = Math.max(longestBeats, sequenceBeats(seq))
@@ -769,7 +771,7 @@ export class Synth {
     // note sounded. Slices cover [cursor, cursor + window) with no overlap, so
     // each note is scheduled exactly once.
     const window = Math.max(lookahead ?? profile.lookahead, LOOKAHEAD_MIN)
-    let cursor = t0
+    let cursor = t0 + offsetBeats * beat
     let first = true
     let advanceTimer = null
     let doneTimer = null
@@ -889,12 +891,14 @@ export class Synth {
     seqs.forEach((seq, seqIndex) => {
       let t = 0
       seq.notes.forEach((n, index) => {
-        const start = t0 + t * beat
-        const startMs = (start - ctx.currentTime) * 1000
-        const endMs = startMs + n.beats * beat * 1000
-        const event = { ...n, index, seqIndex }
-        if (onNoteStart) timers.push(setTimeout(() => onNoteStart(event), Math.max(0, startMs)))
-        if (onNoteEnd) timers.push(setTimeout(() => onNoteEnd(event), Math.max(0, endMs)))
+        if (t >= offsetBeats) {
+          const start = t0 + t * beat
+          const startMs = Math.max(0, (start - ctx.currentTime) * 1000)
+          const endMs = startMs + n.beats * beat * 1000
+          const event = { ...n, index, seqIndex }
+          if (onNoteStart) timers.push(setTimeout(() => onNoteStart(event), startMs))
+          if (onNoteEnd) timers.push(setTimeout(() => onNoteEnd(event), endMs))
+        }
         t += n.beats
       })
     })

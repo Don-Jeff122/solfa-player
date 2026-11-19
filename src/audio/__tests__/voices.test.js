@@ -616,6 +616,32 @@ describe('synth voice graphs', () => {
     vi.useRealTimers()
   })
 
+  it('starts live playback from a beat without replaying earlier notes', () => {
+    vi.useFakeTimers()
+    fake = installFakeAudio()
+    const synth = new Synth()
+    const started = []
+    const seqs = [
+      {
+        name: 'S',
+        notes: [
+          { midi: 60, beats: 1 },
+          { midi: 62, beats: 1 },
+          { midi: 64, beats: 2 },
+        ],
+      },
+    ]
+    const handle = synth.play(seqs, {
+      tempo: 120,
+      startBeat: 1,
+      onNoteStart: (n) => started.push(n.index),
+    })
+    vi.advanceTimersByTime(3000)
+    expect(started).toEqual([1, 2])
+    handle.stop()
+    vi.useRealTimers()
+  })
+
   it('releases its master chain once a song finishes on its own', () => {
     // Only stopping used to disconnect the bus, so every pass that ended by
     // itself â€” and Repeat restarts from onDone â€” left another chain on the

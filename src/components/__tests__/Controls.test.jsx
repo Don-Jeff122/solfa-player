@@ -61,7 +61,7 @@ describe('Playback controls', () => {
 
     expect(button).toContain('>Play<')
     expect(button).toContain('aria-busy="true"')
-    expect(button).toContain('Background audio is being prepared')
+    expect(button).toContain('playback starts when ready')
     expect(button).not.toContain('Preparing…')
   })
 

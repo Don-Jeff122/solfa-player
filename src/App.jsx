@@ -19,8 +19,11 @@ import { audioBufferToWavBlob } from './audio/wav.js'
 import {
   audioChangeKind,
   audioContentKey,
+  audioLiveSettingsKey,
+  audioPlaybackRate,
   audioPlaybackSource,
   audioRenderKey,
+  audioStartBeat,
 } from './audio/keys.js'
 import { parseSolfa } from './lib/parseSolfa.js'
 import {
@@ -424,6 +427,18 @@ export default function App() {
       }),
     [contentKey, octave, activeParts, voiceOctaves, tempo, sound, sustain, metronome]
   )
+  const liveSettingsKey = useMemo(
+    () =>
+      audioLiveSettingsKey({
+        octave,
+        activeParts,
+        voiceOctaves,
+        sound,
+        sustain,
+        metronome,
+      }),
+    [octave, activeParts, voiceOctaves, sound, sustain, metronome]
+  )
   const timeline = useMemo(
     () => (sequences ? buildTimeline(sequences, tempo) : []),
     [sequences, tempo]
@@ -432,6 +447,8 @@ export default function App() {
   const preparedContentKeyRef = useRef(null)
   const previousContentKeyRef = useRef(contentKey)
   const previousRenderKeyRef = useRef(renderKey)
+  const previousLiveSettingsKeyRef = useRef(liveSettingsKey)
+  const pendingLiveStartBeatRef = useRef(null)
   contentKeyRef.current = contentKey
 
   const cancelUiFrame = useCallback(() => {
@@ -541,7 +558,7 @@ export default function App() {
     }
   }, [synth, cancelUiFrame])
 
-  const startLivePlayback = useCallback(() => {
+  const startLivePlayback = useCallback((startBeat = 0) => {
     if (!sequences || !sequences.length || !totalBeats) return
     if (handleRef.current) handleRef.current.stop()
     handleRef.current = null
@@ -554,6 +571,7 @@ export default function App() {
     } catch {}
     handleRef.current = synth.play(sequences, {
       tempo,
+      startBeat,
       voice: sound,
       sustain: ring,
       metronome,
@@ -592,10 +610,13 @@ export default function App() {
       { contentKey: previousContentKeyRef.current, renderKey: previousRenderKeyRef.current },
       { contentKey, renderKey }
     )
+    const liveSettingChanged = previousLiveSettingsKeyRef.current !== liveSettingsKey
     previousContentKeyRef.current = contentKey
     previousRenderKeyRef.current = renderKey
+    previousLiveSettingsKeyRef.current = liveSettingsKey
     if (change === 'none') return
     if (change === 'content') {
+      pendingLiveStartBeatRef.current = null
       if (isPlaying || isPaused) {
         stopPlayback()
         pendingPlayRef.current = true
@@ -603,27 +624,72 @@ export default function App() {
       return
     }
     pendingPlayRef.current = false
-    if (isPlaying && liveFallback) {
+    if (!isPlaying) {
+      const cached = bgCacheRef.current
+      if (liveSettingChanged && !liveFallback && cached?.key === contentKey) {
+        pendingLiveStartBeatRef.current = audioStartBeat(
+          audioRef.current?.currentTime || 0,
+          cached.renderTempo
+        )
+      }
+      return
+    }
+    if (liveFallback) {
       stopPlayback()
       startLivePlayback()
+      return
     }
-  }, [contentKey, renderKey, isPlaying, isPaused, liveFallback, stopPlayback, startLivePlayback])
+    if (!liveSettingChanged) return
+    const cached = bgCacheRef.current
+    if (cached?.key !== contentKey) return
+    const startBeat = audioStartBeat(audioRef.current?.currentTime || 0, cached.renderTempo)
+    pendingLiveStartBeatRef.current = null
+    stopPlayback()
+    startLivePlayback(startBeat)
+  }, [
+    contentKey,
+    renderKey,
+    liveSettingsKey,
+    isPlaying,
+    isPaused,
+    liveFallback,
+    stopPlayback,
+    startLivePlayback,
+  ])
 
-  const updateMediaPosition = useCallback((at) => {
-    if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
-    const total = bgCacheRef.current?.duration
-    if (!Number.isFinite(total) || total <= 0) return
-    const position = Math.min(Math.max(Number(at) || 0, 0), Math.max(total - 0.01, 0))
-    try {
-      navigator.mediaSession.setPositionState({
-        duration: total,
-        playbackRate: 1,
-        position,
-      })
-    } catch {
-      /* some browsers reject position updates */
-    }
-  }, [])
+  const getPlaybackRate = useCallback(() => {
+    const cached = bgCacheRef.current
+    if (liveFallback || cached?.key !== contentKey) return 1
+    return audioPlaybackRate(cached.renderTempo, tempo)
+  }, [contentKey, liveFallback, tempo])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    const cached = bgCacheRef.current
+    if (!audio || liveFallback || cached?.key !== contentKey) return
+    if ('preservesPitch' in audio) audio.preservesPitch = true
+    if ('webkitPreservesPitch' in audio) audio.webkitPreservesPitch = true
+    audio.playbackRate = audioPlaybackRate(cached.renderTempo, tempo)
+  }, [contentKey, tempo, liveFallback, bgStatus])
+
+  const updateMediaPosition = useCallback(
+    (at) => {
+      if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
+      const total = bgCacheRef.current?.duration
+      if (!Number.isFinite(total) || total <= 0) return
+      const mediaPosition = Math.min(Math.max(Number(at) || 0, 0), Math.max(total - 0.01, 0))
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: total,
+          playbackRate: getPlaybackRate(),
+          position: mediaPosition,
+        })
+      } catch {
+        /* some browsers reject position updates */
+      }
+    },
+    [getPlaybackRate]
+  )
 
   /**
    * Paint the chips and piano keys for a position on the prepared track.
@@ -699,6 +765,7 @@ export default function App() {
         key: contentKey,
         url,
         duration: buffer.duration,
+        renderTempo: tempo,
         timeline: buildTimeline(sequences, tempo),
       }
       if (previous?.url && previous.url !== url) {
@@ -729,6 +796,15 @@ export default function App() {
     startLivePlayback()
   }, [resetUi, startLivePlayback])
 
+  const applyMediaRate = useCallback(
+    (audio, cached) => {
+      if ('preservesPitch' in audio) audio.preservesPitch = true
+      if ('webkitPreservesPitch' in audio) audio.webkitPreservesPitch = true
+      audio.playbackRate = audioPlaybackRate(cached.renderTempo, tempo)
+    },
+    [tempo]
+  )
+
   const startBackgroundPlayback = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
@@ -737,6 +813,7 @@ export default function App() {
     setLiveFallback(false)
     setAudioSessionType('playback')
     audio.loop = repeatRef.current
+    applyMediaRate(audio, cached)
     if (audio.src !== cached.url) {
       audio.src = cached.url
       for (const url of bgRetiredRef.current) URL.revokeObjectURL(url)
@@ -772,7 +849,7 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [contentKey, resetUi, updateMediaPosition, failBackgroundPlayback])
+  }, [contentKey, applyMediaRate, resetUi, updateMediaPosition, failBackgroundPlayback])
 
   const resumeBackground = useCallback(() => {
     const audio = audioRef.current
@@ -782,6 +859,7 @@ export default function App() {
     setLiveFallback(false)
     setAudioSessionType('playback')
     audio.loop = repeatRef.current
+    applyMediaRate(audio, cached)
     if (audio.src !== cached.url) {
       audio.src = cached.url
       setPosition(0)
@@ -815,7 +893,7 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [contentKey, updateMediaPosition, failBackgroundPlayback])
+  }, [contentKey, applyMediaRate, updateMediaPosition, failBackgroundPlayback])
 
   const pauseBackground = useCallback(() => {
     const audio = audioRef.current
@@ -837,7 +915,10 @@ export default function App() {
       const audio = audioRef.current
       const total = bgCacheRef.current?.duration
       if (!audio || !Number.isFinite(total) || total <= 0) return
-      const at = Math.min(Math.max(Number(target) || 0, 0), Math.max(total - 0.01, 0))
+      const rate = getPlaybackRate()
+      const shownTotal = total / rate
+      const shownAt = Math.min(Math.max(Number(target) || 0, 0), Math.max(shownTotal - 0.01, 0))
+      const at = shownAt * rate
       try {
         audio.currentTime = at
       } catch {
@@ -847,7 +928,7 @@ export default function App() {
       updateMediaPosition(at)
       if (isPlaying || isPaused) syncTimelineUi(at)
     },
-    [isPlaying, isPaused, syncTimelineUi, updateMediaPosition]
+    [getPlaybackRate, isPlaying, isPaused, syncTimelineUi, updateMediaPosition]
   )
 
   const handleAudioPlay = useCallback(() => {
@@ -923,6 +1004,13 @@ export default function App() {
 
   const handlePlay = () => {
     pendingPlayRef.current = false
+    const pendingStartBeat = pendingLiveStartBeatRef.current
+    if (pendingStartBeat != null) {
+      pendingLiveStartBeatRef.current = null
+      if (isPlaying || isPaused) stopPlayback()
+      startLivePlayback(pendingStartBeat)
+      return
+    }
     if (isPaused && !liveFallback && bgCacheRef.current?.key === contentKey) {
       resumeBackground()
       return
@@ -1343,6 +1431,12 @@ export default function App() {
       : activeParts.length === 1
         ? activeParts[0]
         : `${activeParts.length} parts`
+  const mediaRate =
+    !liveFallback && bgCacheRef.current?.key === contentKey
+      ? audioPlaybackRate(bgCacheRef.current.renderTempo, tempo)
+      : 1
+  const shownDuration = bgDuration / mediaRate
+  const shownPosition = position / mediaRate
 
   return (
     <div className={`app${mobileDockVisible ? ' has-mobile-dock' : ''}`}>
@@ -1655,8 +1749,8 @@ export default function App() {
             onStop={stopPlayback}
             isPaused={isPaused}
             onPause={pauseBackground}
-            progress={position}
-            duration={bgDuration}
+            progress={shownPosition}
+            duration={shownDuration}
             onSeek={seekBackground}
             tempo={tempo}
             onTempo={setTempo}
@@ -1720,7 +1814,7 @@ export default function App() {
             )}
             {!audioError && !error && liveFallback && isPlaying && (
               <span className="status-busy">
-                Playing in live mode; background audio is unavailable.
+                Live playback active; current settings apply now.
               </span>
             )}
             {!audioError &&
@@ -1760,8 +1854,8 @@ export default function App() {
         isPaused={isPaused}
         mediaPlayback={!liveFallback}
         preparing={bgStatus === 'preparing'}
-        progress={position}
-        duration={bgDuration}
+        progress={shownPosition}
+        duration={shownDuration}
         tempo={tempo}
         onPlay={handlePlay}
         onPause={pauseBackground}

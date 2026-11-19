@@ -88,7 +88,7 @@ export default function MobileTransport({
               aria-label={playLabel}
               title={
                 preparing && !isPaused
-                  ? 'Background audio is being prepared; live playback starts immediately'
+                  ? 'Background audio is being prepared; playback starts when ready'
                   : undefined
               }
             >

@@ -50,7 +50,7 @@ describe('MobileTransport', () => {
 
     expect(html).toContain('aria-busy="true"')
     expect(html).toContain('aria-label="Play"')
-    expect(html).toContain('Background audio is being prepared')
+    expect(html).toContain('playback starts when ready')
     expect(html).toContain('mobile-transport-spinner')
   })
 

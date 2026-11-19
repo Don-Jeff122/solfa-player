@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { audioChangeKind, audioContentKey, audioPlaybackSource, audioRenderKey } from '../keys.js'
+import {
+  audioChangeKind,
+  audioContentKey,
+  audioLiveSettingsKey,
+  audioPlaybackRate,
+  audioPlaybackSource,
+  audioRenderKey,
+  audioStartBeat,
+} from '../keys.js'
 import { parseSolfa } from '../../lib/parseSolfa.js'
+import { RENDER_LEAD_SECONDS } from '../../lib/timeline.js'
 
 const settings = {
   octave: 0,
@@ -55,6 +64,27 @@ describe('audio keys', () => {
     expect(audioPlaybackSource(null, content, false)).toBe('live')
     expect(audioPlaybackSource('old-content', content, false)).toBe('live')
     expect(audioPlaybackSource(content, content, true)).toBe('live')
+  })
+
+  it('converts tempo changes into a media playback rate', () => {
+    expect(audioPlaybackRate(90, 90)).toBe(1)
+    expect(audioPlaybackRate(90, 120)).toBeCloseTo(4 / 3, 6)
+    expect(audioPlaybackRate(120, 60)).toBe(0.5)
+  })
+
+  it('converts media time into a live start beat', () => {
+    expect(audioStartBeat(RENDER_LEAD_SECONDS, 120)).toBe(0)
+    expect(audioStartBeat(RENDER_LEAD_SECONDS + 1, 120)).toBe(2)
+    expect(audioStartBeat(0, 120)).toBe(0)
+  })
+
+  it('excludes tempo and repeat from the live handoff key', () => {
+    const base = audioLiveSettingsKey(settings)
+
+    expect(audioLiveSettingsKey({ ...settings, tempo: 140 })).toBe(base)
+    expect(audioLiveSettingsKey({ ...settings, repeat: true })).toBe(base)
+    expect(audioLiveSettingsKey({ ...settings, sound: 'organ' })).not.toBe(base)
+    expect(audioLiveSettingsKey({ ...settings, activeParts: ['S', 'A'] })).not.toBe(base)
   })
 
   it('classifies only note and key changes as content changes', () => {
