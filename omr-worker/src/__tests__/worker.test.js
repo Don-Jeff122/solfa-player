@@ -53,6 +53,64 @@ class MemoryKV {
   }
 }
 
+class MemoryD1 {
+  constructor() {
+    this.store = new Map()
+  }
+
+  prepare(sql) {
+    return {
+      bind: (...params) => ({
+        all: async () => this.all(sql, params),
+        run: async () => this.run(sql, params),
+      }),
+    }
+  }
+
+  async batch(statements) {
+    return Promise.all(statements.map((statement) => statement.run()))
+  }
+
+  async all(sql, params) {
+    if (sql.startsWith('SELECT value FROM kv_store')) {
+      const [key, now] = params
+      const row = this.store.get(key)
+      if (!row || (row.expiresAt !== null && row.expiresAt <= Number(now))) return { results: [] }
+      const value = row.value instanceof ArrayBuffer ? Array.from(new Uint8Array(row.value)) : row.value
+      return { results: [{ value }] }
+    }
+    if (sql.startsWith('SELECT key FROM kv_store')) {
+      const [start, end, now, limit, offset] = params
+      const keys = [...this.store.entries()]
+        .filter(([key]) => key >= start && key < end)
+        .filter(([, entry]) => entry.expiresAt === null || entry.expiresAt > Number(now))
+        .map(([key]) => key)
+        .sort()
+        .slice(Number(offset), Number(offset) + Number(limit))
+      return { results: keys.map((key) => ({ key })) }
+    }
+    return { results: [] }
+  }
+
+  async run(sql, params) {
+    if (sql.startsWith('INSERT OR REPLACE INTO kv_store')) {
+      const [key, value, expiresAt] = params
+      this.store.set(key, { value, expiresAt })
+      return
+    }
+    if (sql.startsWith('DELETE FROM kv_store WHERE key >=')) {
+      const [start, end] = params
+      for (const key of [...this.store.keys()]) {
+        if (key >= start && key < end) this.store.delete(key)
+      }
+      return
+    }
+    if (sql.startsWith('DELETE FROM kv_store WHERE key =')) {
+      this.store.delete(params[0])
+    }
+  }
+}
+
 function makeEnv(kv, extra = {}) {
   return {
     OMR_KV: kv,
@@ -70,6 +128,15 @@ function makeEnv(kv, extra = {}) {
       MAX_ACTIVE_JOBS: '3',
     JOB_TTL_SECONDS: '60',
     ...extra,
+  }
+}
+
+function makeD1Env(db, extra = {}) {
+  return {
+    ...makeEnv(null, extra),
+    OMR_KV: null,
+    OMR_DB: db,
+    STORAGE_BACKEND: 'd1',
   }
 }
 
@@ -525,5 +592,82 @@ describe('OMR worker scheduled cleanup', () => {
     expect(remaining[0].name).toBe('meta:fresh')
     expect((await kv.list({ prefix: 'job:' })).keys).toHaveLength(0)
     expect((await kv.list({ prefix: 'active:' })).keys).toHaveLength(0)
+  })
+})
+
+describe('OMR worker D1 storage', () => {
+  it('stores job state and chunks in D1', async () => {
+    const db = new MemoryD1()
+    const env = makeD1Env(db, { FETCH_IMPL: createFetchStub().impl })
+    const job = await createJob(env)
+
+    const response = await workerFetch(publicRequest(`/api/omr/jobs/${job.id}`), env)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: job.id, status: 'queued' })
+
+    const keys = [...db.store.keys()]
+    expect(keys.some((key) => key === `meta:${job.id}`)).toBe(true)
+    expect(keys.some((key) => key === `active:${job.id}`)).toBe(true)
+    expect(keys.some((key) => key.startsWith(`job:${job.id}:input:`))).toBe(true)
+    expect(keys.some((key) => key.startsWith(`job:${job.id}:status:`))).toBe(true)
+  })
+
+  it('delivers MusicXML stored in D1', async () => {
+    const db = new MemoryD1()
+    const env = makeD1Env(db, { FETCH_IMPL: createFetchStub().impl })
+    const job = await createJob(env)
+
+    await workerFetch(
+      internalRequest(`/internal/jobs/${job.id}/result`, {
+        method: 'POST',
+        body: XML,
+        headers: { 'Content-Type': 'application/vnd.recordare.musicxml+xml' },
+      }),
+      env
+    )
+
+    const download = await workerFetch(publicRequest(`/api/omr/jobs/${job.id}/musicxml`), env)
+    expect(download.status).toBe(200)
+    expect(await download.text()).toBe(XML)
+
+    const keys = [...db.store.keys()]
+    expect(keys.some((key) => key.startsWith(`job:${job.id}:result:`))).toBe(true)
+  })
+
+  it('enforces the daily cap on D1 counters', async () => {
+    const db = new MemoryD1()
+    const env = makeD1Env(db, {
+      FETCH_IMPL: createFetchStub().impl,
+      MAX_UPLOADS_PER_DAY: '1',
+    })
+    await createJob(env)
+
+    const secondResponse = await workerFetch(
+      publicRequest('/api/omr/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf', 'X-File-Name': encodeURIComponent('b.pdf') },
+        body: PDF,
+      }),
+      env
+    )
+    expect(secondResponse.status).toBe(429)
+    expect((await secondResponse.json()).error.code).toBe('DAILY_LIMIT_REACHED')
+  })
+
+  it('cleans expired D1 jobs', async () => {
+    const db = new MemoryD1()
+    const env = makeD1Env(db, { JOB_TTL_SECONDS: '10' })
+    const id = 'old-job'
+    await db
+      .prepare('INSERT OR REPLACE INTO kv_store (key, value, expires_at) VALUES (?, ?, ?)')
+      .bind(
+        `meta:${id}`,
+        JSON.stringify({ id, fileName: 'old.pdf', fileSize: 4, createdAt: 1, updatedAt: 1 }),
+        null
+      )
+      .run()
+
+    await scheduled(null, env, null)
+    expect([...db.store.keys()]).toHaveLength(0)
   })
 })

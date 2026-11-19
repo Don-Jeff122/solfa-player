@@ -121,16 +121,16 @@ cloud pipeline, polls staged progress, validates the generated partwise
 MusicXML, and offers the file for download. It does not send the PDF to Gemini,
 and it does not convert the result into tonic solfa automatically.
 
-The flow is GitHub Pages -> Cloudflare OMR Worker/KV -> GitHub Actions ->
+The flow is GitHub Pages -> Cloudflare OMR Worker/D1 -> GitHub Actions ->
 Audiveris container:
 
 1. The static Pages app uploads to the Worker URL baked in from `OMR_API_URL`.
-2. The Worker stores job state in Workers KV and dispatches the `OMR conversion`
+2. The Worker stores job state in D1 and dispatches the `OMR conversion`
    workflow with `job_id`, `worker_url`, and the sanitized `file_name`.
 3. The workflow downloads the PDF with a shared secret, builds the Audiveris
    container from the repository root, runs it on a standard GitHub-hosted
    runner, and posts throttled progress back to the Worker.
-4. The Worker stores progress and the MusicXML in KV. The browser polls the
+4. The Worker stores progress and the MusicXML in D1. The browser polls the
    Worker and downloads the validated MusicXML when the job completes.
 
 Audiveris handles printed notation, not handwriting. Poor scans, unusual
@@ -144,9 +144,10 @@ The Worker lives in `omr-worker/` and is deployed separately from the Pages app;
 the app only needs its URL. No secret belongs in the frontend, the repository
 source, or a Pages build variable.
 
-1. Create a Workers KV namespace for job state (`npx wrangler@4 kv namespace
-   create OMR_JOBS`) and add the returned id to the OMR Worker's `wrangler.toml`
-   KV binding.
+1. Create a D1 database (`npx wrangler@4 d1 create solfa-omr-state`), add the
+   returned id to the OMR Worker's `[[d1_databases]]` binding, and apply
+   `omr-worker/schema.sql`. Keep the existing KV binding for rollback; set
+   `STORAGE_BACKEND` to `d1` only after the D1 migration is verified.
 2. Create a GitHub fine-grained personal access token scoped to `solfa-player`
    with **Actions: read and write** and **Contents: read**. Set an expiry and
    rotate it. Store it only as a Worker secret named `GITHUB_TOKEN`; the Worker
@@ -156,9 +157,9 @@ source, or a Pages build variable.
    `OMR_INTERNAL_SECRET`. The same value authenticates every Worker internal
    endpoint and is never logged by the workflow.
 4. Deploy the Worker with `npx wrangler@4 deploy` from the `omr-worker`
-   directory. The defaults are four uploads per client per hour, eight uploads
-   per day globally, two active jobs, and a two-hour job TTL. Keep them low so
-   one client cannot exhaust runner minutes or KV writes.
+   directory. The defaults are ten uploads per client per hour, fifty uploads
+   per day globally, two active jobs, and a two-hour job TTL. Keep them bounded
+   so one client cannot exhaust runner minutes or D1 writes.
 5. Set the GitHub Actions repository variable `OMR_API_URL` to the Worker URL
    (for example `https://solfa-omr.<account>.workers.dev`), then rebuild Pages
    by re-running the deploy workflow so the URL is baked into the bundle. The
@@ -167,17 +168,17 @@ source, or a Pages build variable.
 
 ### Free-tier limits
 
-- Workers KV free tier allows 1,000 writes per day and 25 MiB per value. The
-  Worker chunks PDFs and MusicXML into 2 MiB values, coalesces progress into 5%
-  buckets, caps uploads globally per day, and expires keys automatically so
-  normal completion needs no bulk-delete writes.
-- Workers free plan allows 10 ms of CPU time per request. KV and network waits
+- D1 free tier allows 100,000 rows written per day, 5 million rows read per
+  day, and 500 MiB per database. The Worker chunks PDFs and MusicXML into 1.5 MB
+  rows, coalesces progress into 5% buckets, caps uploads globally per day, and
+  deletes expired keys on a schedule.
+- Workers free plan allows 10 ms of CPU time per request. D1 and network waits
   are not CPU time, but OMR must stay in the Actions container, not the Worker.
 - GitHub Actions standard runners are free for public repositories, subject to
   GitHub's usage limits. The workflow has a 20-minute timeout and a concurrency
   group per `job_id`, so duplicate dispatches cannot run at once.
 - PDF uploads are capped at 25 MiB (26,214,400 bytes); MusicXML results are
-  capped at 64 MiB and stored in KV chunks.
+  capped at 64 MiB and stored in D1 chunks.
 
 ### Local backend (development)
 

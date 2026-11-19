@@ -7,6 +7,11 @@ workers_dev = true
 binding = "OMR_KV"
 id = "48f38e45bca5414d81cc97b940f119ac"
 
+[[d1_databases]]
+binding = "OMR_DB"
+database_name = "solfa-omr-state"
+database_id = "fe218394-8124-4bcf-8270-130b797586c6"
+
 [triggers]
 crons = ["0 */6 * * *"]
 
@@ -17,8 +22,9 @@ GITHUB_REF = "main"
 ALLOWED_ORIGINS = "https://don-jeff122.github.io,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173"
 MAX_PDF_BYTES = "26214400"
 MAX_RESULT_BYTES = "67108864"
-CHUNK_BYTES = "2097152"
-MAX_UPLOADS_PER_HOUR = "4"
-MAX_UPLOADS_PER_DAY = "8"
+CHUNK_BYTES = "1500000"
+MAX_UPLOADS_PER_HOUR = "10"
+MAX_UPLOADS_PER_DAY = "50"
 MAX_ACTIVE_JOBS = "2"
 JOB_TTL_SECONDS = "7200"
+STORAGE_BACKEND = "d1"

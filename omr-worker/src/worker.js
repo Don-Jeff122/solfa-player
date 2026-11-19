@@ -91,6 +91,99 @@ function noContent(cors = {}) {
   return new Response(null, { status: 204, headers: { ...cors } })
 }
 
+function toArrayBuffer(value) {
+  if (value instanceof ArrayBuffer) return value
+  if (ArrayBuffer.isView(value)) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
+  }
+  if (Array.isArray(value)) return new Uint8Array(value).buffer
+  return new TextEncoder().encode(String(value ?? '')).buffer
+}
+
+function fromArrayBuffer(value) {
+  return new TextDecoder().decode(toArrayBuffer(value))
+}
+
+function prefixUpperBound(prefix) {
+  if (!prefix) return '\uffff'
+  return prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1)
+}
+
+class D1Storage {
+  constructor(db) {
+    this.db = db
+  }
+
+  async get(key, type) {
+    const result = await this.db
+      .prepare(
+        'SELECT value FROM kv_store WHERE key = ? AND (expires_at IS NULL OR expires_at > ?)'
+      )
+      .bind(key, Date.now())
+      .all()
+    const value = result.results?.[0]?.value
+    if (value === undefined || value === null) return null
+    if (type === 'arrayBuffer') return toArrayBuffer(value)
+    const text = typeof value === 'string' ? value : fromArrayBuffer(value)
+    if (type === 'json') return JSON.parse(text)
+    return text
+  }
+
+  putStatement(key, value, options = {}) {
+    const expiresAt = Number(options.expirationTtl)
+      ? Date.now() + Math.floor(Number(options.expirationTtl)) * 1000
+      : null
+    const stored = value instanceof ArrayBuffer || ArrayBuffer.isView(value)
+      ? toArrayBuffer(value)
+      : String(value)
+    return this.db
+      .prepare('INSERT OR REPLACE INTO kv_store (key, value, expires_at) VALUES (?, ?, ?)')
+      .bind(key, stored, expiresAt)
+  }
+
+  async put(key, value, options = {}) {
+    await this.putStatement(key, value, options).run()
+  }
+
+  async putMany(entries) {
+    if (!entries.length) return
+    await this.db.batch(entries.map(([key, value, options]) => this.putStatement(key, value, options)))
+  }
+
+  async list({ prefix = '', cursor, limit } = {}) {
+    const size = Math.min(Math.max(Number(limit) || 1000, 1), 1000)
+    const offset = Math.max(Number(cursor) || 0, 0)
+    const result = await this.db
+      .prepare(
+        'SELECT key FROM kv_store WHERE key >= ? AND key < ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY key LIMIT ? OFFSET ?'
+      )
+      .bind(prefix, prefixUpperBound(prefix), Date.now(), size, offset)
+      .all()
+    const keys = (result.results || []).map((row) => ({ name: row.key }))
+    return {
+      keys,
+      list_complete: keys.length < size,
+      cursor: keys.length < size ? undefined : String(offset + size),
+    }
+  }
+
+  async delete(key) {
+    await this.db.prepare('DELETE FROM kv_store WHERE key = ?').bind(key).run()
+  }
+
+  async deletePrefix(prefix) {
+    await this.db
+      .prepare('DELETE FROM kv_store WHERE key >= ? AND key < ?')
+      .bind(prefix, prefixUpperBound(prefix))
+      .run()
+  }
+}
+
+export function storageFor(env) {
+  if (env.STORAGE_BACKEND === 'd1') return env.OMR_DB ? new D1Storage(env.OMR_DB) : null
+  return env.OMR_KV || null
+}
+
 function padSeq(seq) {
   return String(seq).padStart(4, '0')
 }
@@ -268,13 +361,19 @@ function publicJob(meta, status) {
 async function writeChunks(kv, prefix, bytes, chunkBytes, ttlSeconds) {
   const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const options = ttlSeconds ? { expirationTtl: ttlSeconds } : undefined
-  let count = 0
+  const entries = []
   for (let offset = 0; offset < data.byteLength; offset += chunkBytes) {
     const end = Math.min(offset + chunkBytes, data.byteLength)
-    await kv.put(`${prefix}:${padSeq(count)}`, data.slice(offset, end), options)
-    count += 1
+    entries.push([`${prefix}:${padSeq(entries.length)}`, data.slice(offset, end), options])
   }
-  return count
+  if (typeof kv.putMany === 'function') {
+    await kv.putMany(entries)
+  } else {
+    for (const [key, value, valueOptions] of entries) {
+      await kv.put(key, value, valueOptions)
+    }
+  }
+  return entries.length
 }
 
 async function readChunks(kv, prefix) {
@@ -296,6 +395,10 @@ async function readChunks(kv, prefix) {
 }
 
 async function deleteKeysWithPrefix(kv, prefix) {
+  if (typeof kv.deletePrefix === 'function') {
+    await kv.deletePrefix(prefix)
+    return
+  }
   const keys = await listAll(kv, prefix)
   await Promise.all(keys.map((key) => kv.delete(key)))
 }
@@ -391,7 +494,7 @@ async function handleHealth(cors) {
 }
 
 async function handleUpload(request, env, cfg, cors) {
-  const kv = env.OMR_KV
+  const kv = storageFor(env)
   const contentType = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase()
   if (contentType && !PDF_TYPES.has(contentType)) {
     return errorResponse(415, 'UNSUPPORTED_FILE', 'Upload a PDF file.', cors)
@@ -669,10 +772,10 @@ export async function fetch(request, env = {}, _ctx) {
     if (!(await isAuthorized(request, env.OMR_INTERNAL_SECRET))) {
       return errorResponse(401, 'UNAUTHORIZED', 'Invalid internal credentials.')
     }
-    if (!env.OMR_KV) {
+    const kv = storageFor(env)
+    if (!kv) {
       return errorResponse(500, 'NOT_CONFIGURED', 'The OMR worker is not configured.')
     }
-    const kv = env.OMR_KV
     const inputId = jobIdFrom(path.match(/^\/internal\/jobs\/([^/]+)\/input$/))
     if (inputId && request.method === 'GET') return handleInternalInput(kv, inputId)
     const progressId = jobIdFrom(path.match(/^\/internal\/jobs\/([^/]+)\/progress$/))
@@ -698,10 +801,10 @@ export async function fetch(request, env = {}, _ctx) {
 
   if (request.method === 'OPTIONS') return noContent(cors)
   if (request.method === 'GET' && path === '/api/health') return handleHealth(cors)
-  if (!env.OMR_KV) {
+  const kv = storageFor(env)
+  if (!kv) {
     return errorResponse(500, 'NOT_CONFIGURED', 'The OMR worker is not configured.', cors)
   }
-  const kv = env.OMR_KV
   if (request.method === 'POST' && path === '/api/omr/jobs') {
     return handleUpload(request, env, cfg, cors)
   }
@@ -714,7 +817,7 @@ export async function fetch(request, env = {}, _ctx) {
 }
 
 export async function scheduled(_controller, env = {}, _ctx) {
-  const kv = env.OMR_KV
+  const kv = storageFor(env)
   if (!kv) return
   const ttlMs = positiveInt(env.JOB_TTL_SECONDS, DEFAULT_JOB_TTL_SECONDS) * 1000
   const now = Date.now()
