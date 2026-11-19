@@ -12,8 +12,8 @@ export function audioContentKey(result, key) {
   })
 }
 
-export function audioPlaybackSource(cacheKey, renderKey, liveFallback = false) {
-  return !liveFallback && cacheKey === renderKey ? 'media' : 'live'
+export function audioPlaybackSource(cacheKey, contentKey, liveFallback = false) {
+  return !liveFallback && cacheKey === contentKey ? 'media' : 'live'
 }
 
 export function audioRenderKey(contentKey, settings) {

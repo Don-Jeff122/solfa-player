@@ -428,11 +428,11 @@ export default function App() {
     () => (sequences ? buildTimeline(sequences, tempo) : []),
     [sequences, tempo]
   )
-  const renderKeyRef = useRef(renderKey)
-  const preparedContentKeyRef = useRef(contentKey)
+  const contentKeyRef = useRef(contentKey)
+  const preparedContentKeyRef = useRef(null)
   const previousContentKeyRef = useRef(contentKey)
   const previousRenderKeyRef = useRef(renderKey)
-  renderKeyRef.current = renderKey
+  contentKeyRef.current = contentKey
 
   const cancelUiFrame = useCallback(() => {
     if (uiFrameRef.current) {
@@ -603,11 +603,11 @@ export default function App() {
       return
     }
     pendingPlayRef.current = false
-    if (isPlaying) {
+    if (isPlaying && liveFallback) {
       stopPlayback()
       startLivePlayback()
     }
-  }, [contentKey, renderKey, isPlaying, isPaused, stopPlayback, startLivePlayback])
+  }, [contentKey, renderKey, isPlaying, isPaused, liveFallback, stopPlayback, startLivePlayback])
 
   const updateMediaPosition = useCallback((at) => {
     if (typeof navigator === 'undefined' || !navigator.mediaSession?.setPositionState) return
@@ -632,8 +632,12 @@ export default function App() {
    */
   const syncTimelineUi = useCallback(
     (at) => {
-      if (!timeline.length) return
-      const state = timelineAt(timeline, at)
+      const activeTimeline =
+        !liveFallback && bgCacheRef.current?.timeline?.length
+          ? bgCacheRef.current.timeline
+          : timeline
+      if (!activeTimeline.length) return
+      const state = timelineAt(activeTimeline, at)
       const previous = noteIndexesRef.current
       let changed = state.indexes.length !== previous.length
       if (!changed) {
@@ -661,21 +665,21 @@ export default function App() {
       activeMidiRef.current = state.midi
       queueUi()
     },
-    [timeline, queueUi]
+    [timeline, liveFallback, queueUi]
   )
 
   const prepareBackground = useCallback(async () => {
     if (!sequences || !sequences.length || !(totalBeats > 0)) return
     const cached = bgCacheRef.current
-    if (cached?.key === renderKey) {
+    if (cached?.key === contentKey) {
       preparedContentKeyRef.current = contentKey
       setBgStatus('ready')
       setBgDuration(cached.duration)
       return
     }
-    if (bgJobRef.current.key === renderKey) return
+    if (bgJobRef.current.key === contentKey) return
     const id = ++bgJobRef.current.id
-    bgJobRef.current.key = renderKey
+    bgJobRef.current.key = contentKey
     setBgStatus('preparing')
     try {
       const tail = Math.max(1.4, getVoice(sound).release + ring + 0.3)
@@ -686,12 +690,17 @@ export default function App() {
         sustain: ring,
         metronome,
       })
-      if (bgJobRef.current.id !== id || renderKeyRef.current !== renderKey) {
+      if (bgJobRef.current.id !== id || contentKeyRef.current !== contentKey) {
         return
       }
       const url = URL.createObjectURL(audioBufferToWavBlob(buffer))
       const previous = bgCacheRef.current
-      bgCacheRef.current = { key: renderKey, url, duration: buffer.duration }
+      bgCacheRef.current = {
+        key: contentKey,
+        url,
+        duration: buffer.duration,
+        timeline: buildTimeline(sequences, tempo),
+      }
       if (previous?.url && previous.url !== url) {
         if (audioRef.current && audioRef.current.src === previous.url) {
           bgRetiredRef.current.push(previous.url)
@@ -709,7 +718,7 @@ export default function App() {
     } finally {
       if (bgJobRef.current.id === id) bgJobRef.current.key = null
     }
-  }, [contentKey, renderKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
+  }, [contentKey, sequences, totalBeats, tempo, sound, ring, metronome, synth])
 
   const failBackgroundPlayback = useCallback(() => {
     backgroundPlaybackKeyRef.current = null
@@ -723,7 +732,7 @@ export default function App() {
   const startBackgroundPlayback = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== renderKey) return false
+    if (!audio || !cached || cached.key !== contentKey) return false
     setAudioError(null)
     setLiveFallback(false)
     setAudioSessionType('playback')
@@ -741,7 +750,7 @@ export default function App() {
     resetUi()
     setPosition(0)
     setBgDuration(cached.duration)
-    backgroundPlaybackKeyRef.current = renderKey
+    backgroundPlaybackKeyRef.current = contentKey
     let playing
     try {
       playing = audio.play()
@@ -763,12 +772,12 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [renderKey, resetUi, updateMediaPosition, failBackgroundPlayback])
+  }, [contentKey, resetUi, updateMediaPosition, failBackgroundPlayback])
 
   const resumeBackground = useCallback(() => {
     const audio = audioRef.current
     const cached = bgCacheRef.current
-    if (!audio || !cached || cached.key !== renderKey) return false
+    if (!audio || !cached || cached.key !== contentKey) return false
     setAudioError(null)
     setLiveFallback(false)
     setAudioSessionType('playback')
@@ -784,7 +793,7 @@ export default function App() {
       }
       setPosition(0)
     }
-    backgroundPlaybackKeyRef.current = renderKey
+    backgroundPlaybackKeyRef.current = contentKey
     let playing
     try {
       playing = audio.play()
@@ -806,7 +815,7 @@ export default function App() {
       playing.catch(failBackgroundPlayback)
     }
     return true
-  }, [renderKey, updateMediaPosition, failBackgroundPlayback])
+  }, [contentKey, updateMediaPosition, failBackgroundPlayback])
 
   const pauseBackground = useCallback(() => {
     const audio = audioRef.current
@@ -903,10 +912,10 @@ export default function App() {
   }, [resetUi, startLivePlayback])
 
   const startPlayback = useCallback(() => {
-    const source = audioPlaybackSource(bgCacheRef.current?.key, renderKey, liveFallback)
+    const source = audioPlaybackSource(bgCacheRef.current?.key, contentKey, liveFallback)
     if (source === 'media' && startBackgroundPlayback()) return
     startLivePlayback()
-  }, [liveFallback, renderKey, startBackgroundPlayback, startLivePlayback])
+  }, [liveFallback, contentKey, startBackgroundPlayback, startLivePlayback])
 
   // The restart is triggered from the synth's done callback, which is created
   // once per pass, so it reads these refs to see the current settings.
@@ -914,12 +923,18 @@ export default function App() {
 
   const handlePlay = () => {
     pendingPlayRef.current = false
-    if (isPaused && !liveFallback && bgCacheRef.current?.key === renderKey) {
+    if (isPaused && !liveFallback && bgCacheRef.current?.key === contentKey) {
       resumeBackground()
       return
     }
-    stopPlayback()
-    startPlayback()
+    const cached = bgCacheRef.current
+    if (cached?.key === contentKey) {
+      if (isPlaying || isPaused) stopPlayback()
+      if (startBackgroundPlayback()) return
+    }
+    if (isPlaying || isPaused) stopPlayback()
+    pendingPlayRef.current = true
+    if (bgStatus !== 'preparing') prepareBackground()
   }
 
   mediaActionsRef.current = {
@@ -937,7 +952,7 @@ export default function App() {
 
   useEffect(() => {
     const cached = bgCacheRef.current
-    if (cached?.key === renderKey) {
+    if (cached?.key === contentKey) {
       preparedContentKeyRef.current = contentKey
       setBgStatus('ready')
       setBgDuration(cached.duration)
@@ -964,7 +979,6 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [
     contentKey,
-    renderKey,
     isPlaying,
     isPaused,
     rendering,
@@ -976,7 +990,7 @@ export default function App() {
 
   useEffect(() => {
     if (!pendingPlayRef.current) return
-    if (bgCacheRef.current?.key === renderKey && bgStatus === 'ready') {
+    if (bgCacheRef.current?.key === contentKey && bgStatus === 'ready') {
       pendingPlayRef.current = false
       stopPlayback()
       startBackgroundPlayback()
@@ -986,20 +1000,20 @@ export default function App() {
       pendingPlayRef.current = false
       startLivePlayback()
     }
-  }, [renderKey, bgStatus, stopPlayback, startBackgroundPlayback, startLivePlayback])
+  }, [contentKey, bgStatus, stopPlayback, startBackgroundPlayback, startLivePlayback])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
     const onVisibility = () => {
       if (document.visibilityState !== 'hidden' || !isPlaying || !liveFallback) return
       const cached = bgCacheRef.current
-      if (!cached || cached.key !== renderKey) return
+      if (!cached || cached.key !== contentKey) return
       stopPlayback()
       startBackgroundPlayback()
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [isPlaying, liveFallback, renderKey, stopPlayback, startBackgroundPlayback])
+  }, [isPlaying, liveFallback, contentKey, stopPlayback, startBackgroundPlayback])
 
   useEffect(() => {
     if (!isPlaying || liveFallback) return

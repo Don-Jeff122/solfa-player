@@ -48,14 +48,13 @@ describe('audio keys', () => {
     expect(audioRenderKey(content, { ...settings, repeat: true })).toBe(base)
   })
 
-  it('prefers media playback when the prepared audio matches the render key', () => {
+  it('prefers media playback when prepared audio matches the content key', () => {
     const content = audioContentKey(parseSolfa('Do Re Mi').result, 'C')
-    const render = audioRenderKey(content, settings)
 
-    expect(audioPlaybackSource(render, render, false)).toBe('media')
-    expect(audioPlaybackSource(null, render, false)).toBe('live')
-    expect(audioPlaybackSource('old-render', render, false)).toBe('live')
-    expect(audioPlaybackSource(render, render, true)).toBe('live')
+    expect(audioPlaybackSource(content, content, false)).toBe('media')
+    expect(audioPlaybackSource(null, content, false)).toBe('live')
+    expect(audioPlaybackSource('old-content', content, false)).toBe('live')
+    expect(audioPlaybackSource(content, content, true)).toBe('live')
   })
 
   it('classifies only note and key changes as content changes', () => {
