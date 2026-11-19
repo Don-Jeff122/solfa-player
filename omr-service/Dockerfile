@@ -12,6 +12,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     fonts-dejavu-core \
+    libgtk-3-0t64 \
     libstdc++6 \
     xauth \
     xvfb \
