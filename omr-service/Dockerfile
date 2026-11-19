@@ -17,7 +17,8 @@ RUN apt-get update \
     xvfb \
   && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL \
+RUN mkdir -p /usr/share/applications /usr/share/desktop-directories /usr/share/icons \
+  && curl -fsSL \
     -o /tmp/audiveris.deb \
     "https://github.com/Audiveris/audiveris/releases/download/${AUDIVERIS_VERSION}/${AUDIVERIS_DEB}" \
   && apt-get update \
